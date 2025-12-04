@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-/* solhint-disable avoid-low-level-calls */
-/* solhint-disable no-inline-assembly */
-/* solhint-disable reason-string */
-
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
@@ -13,12 +9,6 @@ import "@account-abstraction/contracts/core/BaseAccount.sol";
 import "@account-abstraction/contracts/core/Helpers.sol";
 import "@account-abstraction/contracts/accounts/callback/TokenCallbackHandler.sol";
 
-/**
- * minimal multichain account.
- *  this is sample minimal multichain account.
- *  has execute, eth handling methods
- *  has a single signer that can send requests through the entryPoint for each chain.
- */
 contract SimpleMultiChainAccount is
   BaseAccount,
   TokenCallbackHandler,
@@ -97,10 +87,13 @@ contract SimpleMultiChainAccount is
   }
 
   function isValidSignature(bytes32 messageHash, bytes calldata signature) public pure returns (bool) {
-    return _isValidateSignature(messageHash, signature) == SIG_VALIDATION_SUCCESS;
+    return _isValidSignature(messageHash, signature) == SIG_VALIDATION_SUCCESS;
   }
 
-  function _isValidateSignature(bytes32 messageHash, bytes calldata signature) internal pure returns (uint256) {
+  /**
+   * @dev This is a mock implementation of the multichain signature validation. It may be replaced with a more complex implementation like merkle tree in the future.
+   */
+  function _isValidSignature(bytes32 messageHash, bytes calldata signature) internal pure returns (uint256) {
     uint256 signedUserOpHashAmount = signature.length / 32;
     for (uint256 i = 0; i < signedUserOpHashAmount; i++) {
       if (messageHash == bytes32(signature[i * 32:(i + 1) * 32])) {
@@ -110,12 +103,11 @@ contract SimpleMultiChainAccount is
     return SIG_VALIDATION_FAILED;
   }
 
-  /// @dev This is a mock implementation of the multichain signature validation. It may be replaced with a more complex implementation like merkle tree in the future.
   function _validateSignature(
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
   ) internal pure override returns (uint256) {
-    return _isValidateSignature(userOpHash, userOp.signature);
+    return _isValidSignature(userOpHash, userOp.signature);
   }
 
   /**
