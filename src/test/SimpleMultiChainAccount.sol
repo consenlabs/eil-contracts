@@ -96,18 +96,26 @@ contract SimpleMultiChainAccount is
     );
   }
 
+  function isValidSignature(bytes32 messageHash, bytes calldata signature) public pure returns (bool) {
+    return _isValidateSignature(messageHash, signature) == SIG_VALIDATION_SUCCESS;
+  }
+
+  function _isValidateSignature(bytes32 messageHash, bytes calldata signature) internal pure returns (uint256) {
+    uint256 signedUserOpHashAmount = signature.length / 32;
+    for (uint256 i = 0; i < signedUserOpHashAmount; i++) {
+      if (messageHash == bytes32(signature[i * 32:(i + 1) * 32])) {
+        return SIG_VALIDATION_SUCCESS;
+      }
+    }
+    return SIG_VALIDATION_FAILED;
+  }
+
   /// @dev This is a mock implementation of the multichain signature validation. It may be replaced with a more complex implementation like merkle tree in the future.
   function _validateSignature(
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
-  ) internal pure override returns (uint256 validationData) {
-    uint256 signedUserOpHashAmount = userOp.signature.length / 32;
-    validationData = SIG_VALIDATION_FAILED;
-    for (uint256 i = 0; i < signedUserOpHashAmount; i++) {
-      if (userOpHash == bytes32(userOp.signature[i * 32:(i + 1) * 32])) {
-        return SIG_VALIDATION_SUCCESS;
-      }
-    }
+  ) internal pure override returns (uint256) {
+    return _isValidateSignature(userOpHash, userOp.signature);
   }
 
   /**

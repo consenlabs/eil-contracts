@@ -1,7 +1,7 @@
 import assert from "node:assert"
 import { describe, it } from "node:test"
 
-import { getAddress, isAddress } from "viem"
+import { concat, getAddress, isAddress, keccak256 } from "viem"
 
 import { loadEilFixture } from "./fixture/eil.ts"
 import { loadErc4337Fixture } from "./fixture/erc4337.ts"
@@ -38,6 +38,23 @@ describe("Fixture", () => {
     assert.equal(
       getAddress(deployer.account.address),
       await simpleMultiChainAccount.read.owner()
+    )
+
+    const hashes = [keccak256("0xabc"), keccak256("0xdef"), keccak256("0xghi")]
+    const signature = concat(hashes)
+    assert.equal(
+      await simpleMultiChainAccount.read.isValidSignature([
+        hashes[1],
+        signature
+      ]),
+      true
+    )
+    assert.equal(
+      await simpleMultiChainAccount.read.isValidSignature([
+        keccak256("0xjkl"),
+        signature
+      ]),
+      false
     )
   })
 })
