@@ -1,13 +1,15 @@
+import hardhatNetworkHelpers from '@nomicfoundation/hardhat-network-helpers'
+import hardhatNodeTestRunner from '@nomicfoundation/hardhat-node-test-runner'
+import hardhatViem from '@nomicfoundation/hardhat-viem'
+import hardhatViemAssertions from '@nomicfoundation/hardhat-viem-assertions'
 import { HardhatUserConfig } from 'hardhat/config'
-import networkHelpersPlugin from '@nomicfoundation/hardhat-network-helpers'
-import viemPlugin from '@nomicfoundation/hardhat-viem'
-import viemAssertionsPlugin from '@nomicfoundation/hardhat-viem-assertions'
 
 const config: HardhatUserConfig = {
   plugins: [
-    viemPlugin,
-    viemAssertionsPlugin,
-    networkHelpersPlugin
+    hardhatViem,
+    hardhatViemAssertions,
+    hardhatNetworkHelpers,
+    hardhatNodeTestRunner
   ],
   solidity: {
     compilers: [
@@ -22,7 +24,7 @@ const config: HardhatUserConfig = {
     ]
   },
   paths: {
-    sources: './src/',
+    sources: './src/'
   }
 }
 
