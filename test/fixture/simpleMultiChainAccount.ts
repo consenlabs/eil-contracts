@@ -1,8 +1,8 @@
-import { getContract } from "viem"
+import { getContract } from 'viem'
 
-import SimpleMultiChainAccountArtifact from "../../artifacts/src/test/SimpleMultiChainAccount.sol/SimpleMultiChainAccount.json"
-import { getDeployer, getNetwork } from "../util/network.ts"
-import { erc4337Fixture } from "./erc4337.ts"
+import SimpleMultiChainAccountArtifact from '../../artifacts/src/test/SimpleMultiChainAccount.sol/SimpleMultiChainAccount.json'
+import { getDeployer, getNetwork } from '../util/network.ts'
+import { erc4337Fixture } from './erc4337.ts'
 
 export async function simpleMultiChainAccountFixture() {
   const { viem, networkHelpers } = await getNetwork()
@@ -14,7 +14,7 @@ export async function simpleMultiChainAccountFixture() {
   }
   const { entryPoint } = await networkHelpers.loadFixture(erc4337Fixture)
   const simpleMultiChainAccountFactory = await viem.deployContract(
-    "SimpleMultiChainAccountFactory",
+    'SimpleMultiChainAccountFactory',
     [entryPoint.address],
     deployConfig
   )

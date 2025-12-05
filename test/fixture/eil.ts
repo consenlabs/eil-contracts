@@ -1,7 +1,7 @@
-import { maxUint256, zeroAddress } from "viem"
+import { maxUint256, zeroAddress } from 'viem'
 
-import { getDeployer, getNetwork } from "../util/network.ts"
-import { erc4337Fixture } from "./erc4337.ts"
+import { getDeployer, getNetwork } from '../util/network.ts'
+import { erc4337Fixture } from './erc4337.ts'
 
 export async function eilFixture() {
   const { viem, networkHelpers } = await getNetwork()
@@ -13,7 +13,7 @@ export async function eilFixture() {
   }
   const { entryPoint } = await networkHelpers.loadFixture(erc4337Fixture)
   const originSwapManager = await viem.deployContract(
-    "OriginSwapManager",
+    'OriginSwapManager',
     [
       1n, // uint256 _voucherUnlockDelay,
       1n, // uint256 _timeBeforeDisputeExpires,
@@ -27,27 +27,27 @@ export async function eilFixture() {
     deployConfig
   )
   const arbInboxMock = await viem.deployContract(
-    "MockArbInbox",
+    'MockArbInbox',
     [],
     deployConfig
   )
   const arbOutboxMock = await viem.deployContract(
-    "MockArbOutbox",
+    'MockArbOutbox',
     [],
     deployConfig
   )
   const l1ArbConnector = await viem.deployContract(
-    "L1ArbitrumBridgeConnector",
+    'L1ArbitrumBridgeConnector',
     [arbOutboxMock.address, arbInboxMock.address],
     deployConfig
   )
   const l2ArbConnector = await viem.deployContract(
-    "L2ArbitrumBridgeConnector",
+    'L2ArbitrumBridgeConnector',
     [],
     deployConfig
   )
   const l1StakeManager = await viem.deployContract(
-    "L1AtomicSwapStakeManager",
+    'L1AtomicSwapStakeManager',
     [
       {
         claimDelay: 1n,
@@ -63,7 +63,7 @@ export async function eilFixture() {
     deployConfig
   )
   const crossChainPaymaster = await viem.deployContract(
-    "CrossChainPaymaster",
+    'CrossChainPaymaster',
     [
       entryPoint.address, // IEntryPoint _entryPoint,
       l2ArbConnector.address, // address _l2Connector,
