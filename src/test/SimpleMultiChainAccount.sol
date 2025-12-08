@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import "@account-abstraction/contracts/core/BaseAccount.sol";
+import "@account-abstraction/contracts/core/Helpers.sol";
+import "@account-abstraction/contracts/accounts/callback/TokenCallbackHandler.sol";
+
+contract SimpleMultiChainAccount is
+  BaseAccount,
+  TokenCallbackHandler,
+  UUPSUpgradeable,
+  Initializable
+{
+  address public owner;
+
+  IEntryPoint private immutable _entryPoint;
+
+  event SimpleMultiChainAccountInitialized(
+    IEntryPoint indexed entryPoint,
+    address indexed owner
+  );
+
+  modifier onlyOwner() {
+    _onlyOwner();
+    _;
+  }
+
+  error NotOwner(address msgSender, address entity, address owner);
+  error NotOwnerOrEntryPoint(
+    address msgSender,
+    address entity,
+    address entryPoint,
+    address owner
+  );
+
+  /// @inheritdoc BaseAccount
+  function entryPoint() public view virtual override returns (IEntryPoint) {
+    return _entryPoint;
+  }
+
+  // solhint-disable-next-line no-empty-blocks
+  receive() external payable {}
+
+  constructor(IEntryPoint anEntryPoint) {
+    _entryPoint = anEntryPoint;
+    _disableInitializers();
+  }
+
+  function _onlyOwner() internal view {
+    // Directly from EOA owner, or through the account itself (which gets redirected through execute())
+    require(
+      msg.sender == owner || msg.sender == address(this),
+      NotOwner(msg.sender, address(this), owner)
+    );
+  }
+
+  /**
+   * @dev The _entryPoint member is immutable, to reduce gas consumption.  To upgrade EntryPoint,
+   * a new implementation of SimpleAccount must be deployed with the new EntryPoint address, then upgrading
+   * the implementation by calling `upgradeTo()`
+   * @param anOwner the owner (signer) of this account
+   */
+  function initialize(address anOwner) public virtual initializer {
+    _initialize(anOwner);
+  }
+
+  function _initialize(address anOwner) internal virtual {
+    owner = anOwner;
+    emit SimpleMultiChainAccountInitialized(_entryPoint, owner);
+  }
+
+  // Require the function call went through EntryPoint or owner
+  function _requireForExecute() internal view virtual override {
+    require(
+      msg.sender == address(entryPoint()) || msg.sender == owner,
+      NotOwnerOrEntryPoint(
+        msg.sender,
+        address(this),
+        address(entryPoint()),
+        owner
+      )
+    );
+  }
+
+  function isValidSignature(bytes32 messageHash, bytes calldata signature) public pure returns (bool) {
+    return _isValidSignature(messageHash, signature) == SIG_VALIDATION_SUCCESS;
+  }
+
+  /**
+   * @dev This is a mock implementation of the multichain signature validation. It may be replaced with a more complex implementation like merkle tree in the future.
+   */
+  function _isValidSignature(bytes32 messageHash, bytes calldata signature) internal pure returns (uint256) {
+    uint256 signedUserOpHashAmount = signature.length / 32;
+    for (uint256 i = 0; i < signedUserOpHashAmount; i++) {
+      if (messageHash == bytes32(signature[i * 32:(i + 1) * 32])) {
+        return SIG_VALIDATION_SUCCESS;
+      }
+    }
+    return SIG_VALIDATION_FAILED;
+  }
+
+  function _validateSignature(
+    PackedUserOperation calldata userOp,
+    bytes32 userOpHash
+  ) internal pure override returns (uint256) {
+    return _isValidSignature(userOpHash, userOp.signature);
+  }
+
+  /**
+   * check current account deposit in the entryPoint
+   */
+  function getDeposit() public view returns (uint256) {
+    return entryPoint().balanceOf(address(this));
+  }
+
+  /**
+   * deposit more funds for this account in the entryPoint
+   */
+  function addDeposit() public payable {
+    entryPoint().depositTo{ value: msg.value }(address(this));
+  }
+
+  /**
+   * withdraw value from the account's deposit
+   * @param withdrawAddress target to send to
+   * @param amount to withdraw
+   */
+  function withdrawDepositTo(
+    address payable withdrawAddress,
+    uint256 amount
+  ) public onlyOwner {
+    entryPoint().withdrawTo(withdrawAddress, amount);
+  }
+
+  function _authorizeUpgrade(address newImplementation) internal view override {
+    (newImplementation);
+    _onlyOwner();
+  }
+}
