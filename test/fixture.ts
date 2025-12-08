@@ -16,7 +16,7 @@ describe('Fixture', () => {
 
   it('should load EIL fixture', async () => {
     const eilFixture = await loadEilFixture()
-    // 验证所有合约地址（排除 deployer 等非合约对象）
+    // Verify all contract addresses (excluding deployer and other non-contract objects)
     const contracts = [
       eilFixture.crossChainPaymaster,
       eilFixture.l1StakeManager,
