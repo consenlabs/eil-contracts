@@ -1,5 +1,5 @@
-import hre from "hardhat"
-import { NetworkConnection } from "hardhat/types/network"
+import hre from 'hardhat'
+import { NetworkConnection } from 'hardhat/types/network'
 
 let network: NetworkConnection | null = null
 

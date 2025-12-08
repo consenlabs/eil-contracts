@@ -1,7 +1,7 @@
-import EntryPointArtifact from "@account-abstraction/contracts/artifacts/EntryPoint.json"
-import { getContract } from "viem"
+import EntryPointArtifact from '@account-abstraction/contracts/artifacts/EntryPoint.json'
+import { getContract } from 'viem'
 
-import { getDeployer, getNetwork } from "../util/network.ts"
+import { getDeployer, getNetwork } from '../util/network.ts'
 
 export async function erc4337Fixture() {
   const { viem } = await getNetwork()

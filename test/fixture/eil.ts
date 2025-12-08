@@ -1,7 +1,7 @@
-import { maxUint256, parseEther, zeroAddress } from "viem"
+import { maxUint256, parseEther, zeroAddress } from 'viem'
 
-import { getDeployer, getNetwork } from "../util/network.ts"
-import { erc4337Fixture } from "./erc4337.ts"
+import { getDeployer, getNetwork } from '../util/network.ts'
+import { erc4337Fixture } from './erc4337.ts'
 
 export interface EilFixtureOptions {
   // Dispute period delay (default 1 second for fast testing)
@@ -36,14 +36,14 @@ export async function createEilFixture(options: EilFixtureOptions = {}) {
 
   // Deploy OriginSwapManager (used for delegate calls)
   const originSwapManager = await viem.deployContract(
-    "OriginSwapManager",
+    'OriginSwapManager',
     [
       voucherUnlockDelay,
       timeBeforeDisputeExpires,
       userCancellationDelay,
       voucherMinExpirationTime,
       0n, // uint256 _disputeBondPercent
-      parseEther("0.1"), // uint256 _flatNativeBond
+      parseEther('0.1'), // uint256 _flatNativeBond
       zeroAddress, // address originModule
       0n // uint256 l1DisputeGasLimit
     ],
@@ -52,29 +52,29 @@ export async function createEilFixture(options: EilFixtureOptions = {}) {
 
   // Deploy Mock Bridge Connectors
   const arbInboxMock = await viem.deployContract(
-    "MockArbInbox",
+    'MockArbInbox',
     [],
     deployConfig
   )
   const arbOutboxMock = await viem.deployContract(
-    "MockArbOutbox",
+    'MockArbOutbox',
     [],
     deployConfig
   )
   const l1ArbConnector = await viem.deployContract(
-    "L1ArbitrumBridgeConnector",
+    'L1ArbitrumBridgeConnector',
     [arbOutboxMock.address, arbInboxMock.address],
     deployConfig
   )
   const l2ArbConnector = await viem.deployContract(
-    "L2ArbitrumBridgeConnector",
+    'L2ArbitrumBridgeConnector',
     [],
     deployConfig
   )
 
   // Deploy L1AtomicSwapStakeManager
   const l1StakeManager = await viem.deployContract(
-    "L1AtomicSwapStakeManager",
+    'L1AtomicSwapStakeManager',
     [
       {
         claimDelay: 1n,
@@ -94,7 +94,7 @@ export async function createEilFixture(options: EilFixtureOptions = {}) {
   // Note: When l2Connector is set to zeroAddress, _requireFromL1StakeManager check is skipped.
   // This allows us to call onL1XlpChainInfoAdded directly in test environment.
   const crossChainPaymaster = await viem.deployContract(
-    "CrossChainPaymaster",
+    'CrossChainPaymaster',
     [
       entryPoint.address, // IEntryPoint _entryPoint
       disableL2Connector ? zeroAddress : l2ArbConnector.address, // address _l2Connector
@@ -111,14 +111,14 @@ export async function createEilFixture(options: EilFixtureOptions = {}) {
 
   // Deploy test ERC20 token
   const testToken = await viem.deployContract(
-    "TestERC20",
-    ["Test Token", "TT", 18],
+    'TestERC20',
+    ['Test Token', 'TT', 18],
     deployConfig
   )
 
   // Deploy DummyAccount for testing
   const dummyAccount = await viem.deployContract(
-    "DummyAccount",
+    'DummyAccount',
     [],
     deployConfig
   )
