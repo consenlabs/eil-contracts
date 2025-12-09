@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 
 import {
+  concat,
   encodeAbiParameters,
   encodeFunctionData,
   getAddress,
@@ -9,7 +10,8 @@ import {
   keccak256,
   pad,
   parseEther,
-  toHex
+  toHex,
+  zeroAddress
 } from 'viem'
 
 import CrossChainPaymasterArtifact from '../../artifacts/src/CrossChainPaymaster.sol/CrossChainPaymaster.json'
@@ -49,124 +51,6 @@ function getPaymasterWithOriginAbi(crossChainPaymaster: any, client: any) {
  * 9. Wait an hour
  * 10. XLP Unlock & reuse funds (XLP withdraws funds from origin chain)
  */
-
-/**
- * Build a PackedUserOperation for SimpleMultiChainAccount
- */
-async function buildUserOp(
-  accountAddress: `0x${string}`,
-  entryPoint: any,
-  callData: `0x${string}`,
-  paymasterAndData: `0x${string}` = '0x'
-): Promise<any> {
-  const nonce = await entryPoint.read.getNonce([accountAddress, 0n])
-
-  // Pack accountGasLimits: uint128(verificationGasLimit) || uint128(callGasLimit)
-  const verificationGasLimit = 500000n // Increased for complex operations
-  const callGasLimit = 500000n // Increased for complex operations
-  const accountGasLimits =
-    pad(toHex(verificationGasLimit), { size: 16 }) +
-    pad(toHex(callGasLimit), { size: 16 }).slice(2)
-
-  // Pack gasFees: uint128(maxPriorityFeePerGas) || uint128(maxFeePerGas)
-  const maxPriorityFeePerGas = 1000000000n
-  const maxFeePerGas = 1000000000n
-  const gasFees =
-    pad(toHex(maxPriorityFeePerGas), { size: 16 }) +
-    pad(toHex(maxFeePerGas), { size: 16 }).slice(2)
-
-  // Build UserOperation (PackedUserOperation format)
-  const userOp = {
-    sender: accountAddress,
-    nonce,
-    initCode: '0x' as `0x${string}`,
-    callData,
-    accountGasLimits: accountGasLimits as `0x${string}`,
-    preVerificationGas: 100000n, // Increased
-    gasFees: gasFees as `0x${string}`,
-    paymasterAndData,
-    signature: '0x' as `0x${string}`
-  }
-
-  // Calculate userOpHash
-  const userOpHash = await entryPoint.read.getUserOpHash([userOp])
-
-  return { userOp, userOpHash }
-}
-
-/**
- * Sign UserOperation for SimpleMultiChainAccount
- * SimpleMultiChainAccount expects signature to be the userOpHash as bytes (32 bytes)
- */
-function signUserOp(userOpHash: `0x${string}`): `0x${string}` {
-  // SimpleMultiChainAccount expects signature to contain the userOpHash
-  // The signature is just the userOpHash as bytes (32 bytes)
-  return pad(userOpHash, { size: 32 })
-}
-
-// Helper function: Calculate VoucherRequest ID
-function getVoucherRequestId(voucherRequest: any): `0x${string}` {
-  const encoded = encodeAbiParameters(
-    [
-      {
-        type: 'tuple',
-        components: [
-          {
-            type: 'tuple',
-            name: 'origination',
-            components: [
-              { type: 'uint256', name: 'chainId' },
-              { type: 'address', name: 'paymaster' },
-              { type: 'address', name: 'sender' },
-              {
-                type: 'tuple[]',
-                name: 'assets',
-                components: [
-                  { type: 'address', name: 'erc20Token' },
-                  { type: 'uint256', name: 'amount' }
-                ]
-              },
-              {
-                type: 'tuple',
-                name: 'feeRule',
-                components: [
-                  { type: 'uint256', name: 'startFeePercentNumerator' },
-                  { type: 'uint256', name: 'maxFeePercentNumerator' },
-                  { type: 'uint256', name: 'feeIncreasePerSecond' },
-                  { type: 'uint256', name: 'unspentVoucherFee' }
-                ]
-              },
-              { type: 'uint256', name: 'senderNonce' },
-              { type: 'address[]', name: 'allowedXlps' }
-            ]
-          },
-          {
-            type: 'tuple',
-            name: 'destination',
-            components: [
-              { type: 'uint256', name: 'chainId' },
-              { type: 'address', name: 'paymaster' },
-              { type: 'address', name: 'sender' },
-              {
-                type: 'tuple[]',
-                name: 'assets',
-                components: [
-                  { type: 'address', name: 'erc20Token' },
-                  { type: 'uint256', name: 'amount' }
-                ]
-              },
-              { type: 'uint256', name: 'maxUserOpCost' },
-              { type: 'uint256', name: 'expiresAt' }
-            ]
-          }
-        ]
-      }
-    ],
-    [voucherRequest]
-  )
-  return keccak256(encoded)
-}
-
 describe('Cross-Chain Atomic Swap Integration', () => {
   /**
    * Complete cross-chain atomic swap flow test.
@@ -518,6 +402,18 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     )
     console.log('✓ XLP funded with:', xlpDepositAmount, 'wei')
 
+    // Deposit ETH to EntryPoint for CrossChainPaymaster to pay for gas as paymaster
+    const paymasterDepositAmount = parseEther('1')
+    await entryPoint.write.depositTo([crossChainPaymaster.address], {
+      value: paymasterDepositAmount,
+      account: deployer.account
+    })
+    console.log(
+      '✓ CrossChainPaymaster deposited to EntryPoint:',
+      paymasterDepositAmount,
+      'wei'
+    )
+
     // Step 2: Alice commits funds on origin chain via SimpleMultiChainAccount
     console.log('\n=== Step 2: Alice commits funds on origin chain via AA ===')
     const chainId = await publicClient.getChainId()
@@ -684,8 +580,10 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     ])
     console.log('✓ Voucher issued by XLP')
 
-    // Step 4: Alice uses voucher via UserOp
-    console.log('\n=== Step 4: Alice uses voucher via UserOp ===')
+    // Step 4: Alice uses voucher via UserOp with Paymaster
+    console.log(
+      '\n=== Step 4: Alice uses voucher via UserOp with Paymaster ==='
+    )
 
     const voucherForWithdraw = {
       requestId,
@@ -696,19 +594,28 @@ describe('Cross-Chain Atomic Swap Integration', () => {
       xlpSignature
     }
 
-    // Encode withdrawFromVoucher call
-    const withdrawCallData = encodeFunctionData({
-      abi: CrossChainPaymasterArtifact.abi,
-      functionName: 'withdrawFromVoucher',
-      args: [voucherRequest, voucherForWithdraw]
-    })
+    // Build DestinationVoucherRequestsData
+    // vouchersAssetsMinimums: minimum amounts for each voucher (can be same as voucher amounts)
+    const destinationVoucherRequestsData = {
+      vouchersAssetsMinimums: [voucherRequest.destination.assets], // Minimum amounts for the voucher
+      ephemeralSigner: zeroAddress // No ephemeral signer for this test
+    }
 
-    // Build UserOp to call withdrawFromVoucher via SimpleMultiChainAccount
-    const executeWithdrawCallData = encodeFunctionData({
-      abi: SimpleMultiChainAccountArtifact.abi,
-      functionName: 'execute',
-      args: [crossChainPaymaster.address, 0n, withdrawCallData]
-    })
+    // Build SessionData (empty for this test)
+    const sessionData = {
+      data: '0x' as `0x${string}`,
+      ephemeralSignature: '0x' as `0x${string}`
+    }
+
+    // Encode paymasterAndData
+    const paymasterAndData = encodePaymasterAndData(
+      getAddress(crossChainPaymaster.address),
+      100000n, // validationGasLimit
+      50000n, // postOpGasLimit
+      destinationVoucherRequestsData,
+      [voucherForWithdraw], // vouchers array
+      sessionData
+    )
 
     // Check Alice's AA account balance before
     const aliceBalanceBefore = await publicClient.getBalance({
@@ -716,12 +623,20 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     })
     console.log('Alice AA account balance before:', aliceBalanceBefore)
 
-    // Build and submit UserOp
+    // Build UserOp with paymaster (callData can be empty or a no-op)
+    // The paymaster will handle the voucher withdrawal in _validatePaymasterUserOp
+    const noOpCallData = encodeFunctionData({
+      abi: SimpleMultiChainAccountArtifact.abi,
+      functionName: 'execute',
+      args: [aliceAccountAddress, 0n, '0x'] // No-op: call self with empty data
+    })
+
     const { userOp: withdrawUserOp, userOpHash: withdrawUserOpHash } =
       await buildUserOp(
         aliceAccountAddress,
         entryPoint,
-        executeWithdrawCallData
+        noOpCallData,
+        paymasterAndData
       )
     withdrawUserOp.signature = signUserOp(withdrawUserOpHash)
     await entryPoint.write.handleOps([[withdrawUserOp], alice.account.address])
@@ -924,3 +839,223 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     console.log('✓ XLP registration and balance queries work correctly')
   })
 })
+
+/**
+ * Build a PackedUserOperation for SimpleMultiChainAccount
+ */
+async function buildUserOp(
+  accountAddress: `0x${string}`,
+  entryPoint: any,
+  callData: `0x${string}`,
+  paymasterAndData: `0x${string}` = '0x'
+): Promise<any> {
+  const nonce = await entryPoint.read.getNonce([accountAddress, 0n])
+
+  // Pack accountGasLimits: uint128(verificationGasLimit) || uint128(callGasLimit)
+  const verificationGasLimit = 500000n // Increased for complex operations
+  const callGasLimit = 500000n // Increased for complex operations
+  const accountGasLimits =
+    pad(toHex(verificationGasLimit), { size: 16 }) +
+    pad(toHex(callGasLimit), { size: 16 }).slice(2)
+
+  // Pack gasFees: uint128(maxPriorityFeePerGas) || uint128(maxFeePerGas)
+  const maxPriorityFeePerGas = 1000000000n
+  const maxFeePerGas = 1000000000n
+  const gasFees =
+    pad(toHex(maxPriorityFeePerGas), { size: 16 }) +
+    pad(toHex(maxFeePerGas), { size: 16 }).slice(2)
+
+  // Build UserOperation (PackedUserOperation format)
+  const userOp = {
+    sender: accountAddress,
+    nonce,
+    initCode: '0x' as `0x${string}`,
+    callData,
+    accountGasLimits: accountGasLimits as `0x${string}`,
+    preVerificationGas: 100000n, // Increased
+    gasFees: gasFees as `0x${string}`,
+    paymasterAndData,
+    signature: '0x' as `0x${string}`
+  }
+
+  // Calculate userOpHash
+  const userOpHash = await entryPoint.read.getUserOpHash([userOp])
+
+  return { userOp, userOpHash }
+}
+
+/**
+ * Sign UserOperation for SimpleMultiChainAccount
+ * SimpleMultiChainAccount expects signature to be the userOpHash as bytes (32 bytes)
+ */
+function signUserOp(userOpHash: `0x${string}`): `0x${string}` {
+  // SimpleMultiChainAccount expects signature to contain the userOpHash
+  // The signature is just the userOpHash as bytes (32 bytes)
+  return pad(userOpHash, { size: 32 })
+}
+
+/**
+ * Encode paymasterAndData for CrossChainPaymaster
+ * Format: paymaster(20) + validationGasLimit(16) + postOpGasLimit(16) + signedPaymasterData + paymasterSignature + uint16(sigLen) + PAYMASTER_SIG_MAGIC(8)
+ */
+function encodePaymasterAndData(
+  paymasterAddress: `0x${string}`,
+  validationGasLimit: bigint,
+  postOpGasLimit: bigint,
+  destinationVoucherRequestsData: any,
+  vouchers: any[],
+  sessionData: any
+): `0x${string}` {
+  const PAYMASTER_SIG_MAGIC = '0x22e325a297439656' as const
+  const PAYMASTER_DATA_OFFSET = 52 // 20 + 16 + 16
+
+  // Encode signedPaymasterData (DestinationVoucherRequestsData)
+  const signedPaymasterData = encodeAbiParameters(
+    [
+      {
+        type: 'tuple',
+        components: [
+          {
+            type: 'tuple[][]',
+            name: 'vouchersAssetsMinimums',
+            components: [
+              { type: 'address', name: 'erc20Token' },
+              { type: 'uint256', name: 'amount' }
+            ]
+          },
+          { type: 'address', name: 'ephemeralSigner' }
+        ]
+      }
+    ],
+    [
+      {
+        vouchersAssetsMinimums:
+          destinationVoucherRequestsData.vouchersAssetsMinimums,
+        ephemeralSigner: destinationVoucherRequestsData.ephemeralSigner
+      }
+    ]
+  )
+
+  // Encode paymasterSignature (AtomicSwapVoucher[] + SessionData)
+  const paymasterSignature = encodeAbiParameters(
+    [
+      {
+        type: 'tuple[]',
+        components: [
+          { type: 'bytes32', name: 'requestId' },
+          { type: 'address', name: 'originationXlpAddress' },
+          {
+            type: 'tuple',
+            name: 'voucherRequestDest',
+            components: [
+              { type: 'uint256', name: 'chainId' },
+              { type: 'address', name: 'paymaster' },
+              { type: 'address', name: 'sender' },
+              {
+                type: 'tuple[]',
+                name: 'assets',
+                components: [
+                  { type: 'address', name: 'erc20Token' },
+                  { type: 'uint256', name: 'amount' }
+                ]
+              },
+              { type: 'uint256', name: 'maxUserOpCost' },
+              { type: 'uint256', name: 'expiresAt' }
+            ]
+          },
+          { type: 'uint256', name: 'expiresAt' },
+          { type: 'uint8', name: 'voucherType' },
+          { type: 'bytes', name: 'xlpSignature' }
+        ]
+      },
+      {
+        type: 'tuple',
+        components: [
+          { type: 'bytes', name: 'data' },
+          { type: 'bytes', name: 'ephemeralSignature' }
+        ]
+      }
+    ],
+    [vouchers, sessionData]
+  )
+
+  // Calculate signature length in bytes (hex string: 2 chars = 1 byte)
+  const sigLengthBytes = (paymasterSignature.length - 2) / 2
+  const sigLengthHex = pad(toHex(BigInt(sigLengthBytes)), { size: 2 })
+
+  // Build paymasterAndData
+  const paymasterAndData = concat([
+    pad(paymasterAddress, { size: 20 }), // paymaster address
+    pad(toHex(validationGasLimit), { size: 16 }), // validationGasLimit
+    pad(toHex(postOpGasLimit), { size: 16 }), // postOpGasLimit
+    signedPaymasterData, // signedPaymasterData
+    paymasterSignature, // paymasterSignature
+    sigLengthHex, // uint16(signatureLength)
+    PAYMASTER_SIG_MAGIC // PAYMASTER_SIG_MAGIC
+  ])
+
+  return paymasterAndData
+}
+
+// Helper function: Calculate VoucherRequest ID
+function getVoucherRequestId(voucherRequest: any): `0x${string}` {
+  const encoded = encodeAbiParameters(
+    [
+      {
+        type: 'tuple',
+        components: [
+          {
+            type: 'tuple',
+            name: 'origination',
+            components: [
+              { type: 'uint256', name: 'chainId' },
+              { type: 'address', name: 'paymaster' },
+              { type: 'address', name: 'sender' },
+              {
+                type: 'tuple[]',
+                name: 'assets',
+                components: [
+                  { type: 'address', name: 'erc20Token' },
+                  { type: 'uint256', name: 'amount' }
+                ]
+              },
+              {
+                type: 'tuple',
+                name: 'feeRule',
+                components: [
+                  { type: 'uint256', name: 'startFeePercentNumerator' },
+                  { type: 'uint256', name: 'maxFeePercentNumerator' },
+                  { type: 'uint256', name: 'feeIncreasePerSecond' },
+                  { type: 'uint256', name: 'unspentVoucherFee' }
+                ]
+              },
+              { type: 'uint256', name: 'senderNonce' },
+              { type: 'address[]', name: 'allowedXlps' }
+            ]
+          },
+          {
+            type: 'tuple',
+            name: 'destination',
+            components: [
+              { type: 'uint256', name: 'chainId' },
+              { type: 'address', name: 'paymaster' },
+              { type: 'address', name: 'sender' },
+              {
+                type: 'tuple[]',
+                name: 'assets',
+                components: [
+                  { type: 'address', name: 'erc20Token' },
+                  { type: 'uint256', name: 'amount' }
+                ]
+              },
+              { type: 'uint256', name: 'maxUserOpCost' },
+              { type: 'uint256', name: 'expiresAt' }
+            ]
+          }
+        ]
+      }
+    ],
+    [voucherRequest]
+  )
+  return keccak256(encoded)
+}
