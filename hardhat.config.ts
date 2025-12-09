@@ -27,7 +27,7 @@ const config: HardhatUserConfig = {
     sources: './src/'
   },
   networks: {
-    // Background devnet nodes (run with: npx hardhat node --fork <url> --port <port>)
+    // Background devnet nodes (run with: npx hardhat node --network <network-name> --port <port>)
     mainnetMock: {
       type: 'edr-simulated',
       chainId: 1
