@@ -14,7 +14,6 @@ import {
   zeroAddress
 } from 'viem'
 
-import CrossChainPaymasterArtifact from '../../artifacts/src/CrossChainPaymaster.sol/CrossChainPaymaster.json'
 import OriginSwapManagerArtifact from '../../artifacts/src/origin/OriginSwapManager.sol/OriginSwapManager.json'
 import SimpleMultiChainAccountArtifact from '../../artifacts/src/test/SimpleMultiChainAccount.sol/SimpleMultiChainAccount.json'
 import TestERC20Artifact from '../../artifacts/src/test/TestERC20.sol/TestERC20.json'
@@ -163,10 +162,9 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     console.log('\n=== Step 2 & 3: Alice commits funds on origin chain ===')
     const chainId = await publicClient.getChainId()
     const currentTimestamp = BigInt(await networkHelpers.time.latest())
-    // Get nonce for SimpleMultiChainAccount (not EOA)
-    const aliceAccountNonce = await paymasterAsOrigin.read.getSenderNonce([
-      aliceAccountAddress
-    ])
+    const aliceAccountNonce = await (
+      paymasterAsOrigin as any
+    ).read.getSenderNonce([aliceAccountAddress])
 
     const swapAmount = parseEther('1')
     const maxFeePercent = 100n
@@ -274,8 +272,8 @@ describe('Cross-Chain Atomic Swap Integration', () => {
         aliceAccountAddress,
         entryPoint,
         executeLockDepositCallData,
-        '0x', // No paymaster for UserOp1
-        currentNonce // Use current nonce for UserOp1
+        '0x',
+        currentNonce as bigint
       )
 
     // Build UserOp2: Use voucher (with paymaster, but WITHOUT paymasterSignature yet)
@@ -295,7 +293,7 @@ describe('Cross-Chain Atomic Swap Integration', () => {
       voucherRequestDest: voucherRequest.destination,
       expiresAt: 0n,
       voucherType: 0,
-      xlpSignature: '0x' + '00'.repeat(65) // 65 bytes for ECDSA signature
+      xlpSignature: ('0x' + '00'.repeat(65)) as `0x${string}`
     }
     const placeholderSessionData = {
       data: '0x' as `0x${string}`,
@@ -368,27 +366,24 @@ describe('Cross-Chain Atomic Swap Integration', () => {
         entryPoint,
         noOpCallData,
         paymasterAndDataWithoutSig,
-        currentNonce + 1n // Use next nonce for UserOp2
+        (currentNonce as bigint) + 1n // Use next nonce for UserOp2
       )
 
-    // Sign both UserOps NOW (before getting voucher)
-    // The signature is valid because userOpHash doesn't include paymasterSignature
-    lockUserOp.signature = signUserOp(lockUserOpHash)
-    withdrawUserOp.signature = signUserOp(withdrawUserOpHash)
-    console.log('✓ UserOp1 and UserOp2 signed before getting voucher')
-    console.log(
-      '✓ Signatures are valid even after adding paymasterSignature later'
-    )
+    // Sign both UserOps with a unified signature
+    const unifiedSignature = concat([
+      pad(lockUserOpHash, { size: 32 }),
+      pad(withdrawUserOpHash, { size: 32 })
+    ]) as `0x${string}`
+    lockUserOp.signature = unifiedSignature
+    withdrawUserOp.signature = unifiedSignature
 
-    // Execute UserOp1 immediately (no paymaster needed)
+    // Execute UserOp1
     await entryPoint.write.handleOps([[lockUserOp], alice.account.address])
 
-    // Verify swap status was created
-    const metadata = await paymasterAsOrigin.read.getAtomicSwapMetadata([
-      requestId
-    ])
+    const metadata = await (
+      paymasterAsOrigin as any
+    ).read.getAtomicSwapMetadata([requestId])
     assert.equal(metadata.core.status, 1, 'Status should be NEW (1)')
-    console.log('✓ Atomic swap created with status NEW via UserOp')
 
     // ========================================
     // Step 4: XLP Claim funds (gives voucher)
@@ -448,13 +443,14 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     }
 
     // XLP issues voucher (needs to be called with XLP's account)
-    await paymasterAsOriginXlp.write.issueVouchers([
+    await (paymasterAsOriginXlp as any).write.issueVouchers([
       [{ voucherRequest, voucher }]
     ])
 
     // Verify voucher is issued
-    const metadataAfterVoucher =
-      await paymasterAsOrigin.read.getAtomicSwapMetadata([requestId])
+    const metadataAfterVoucher = await (
+      paymasterAsOrigin as any
+    ).read.getAtomicSwapMetadata([requestId])
     assert.equal(
       metadataAfterVoucher.core.status,
       2,
@@ -502,311 +498,13 @@ describe('Cross-Chain Atomic Swap Integration', () => {
       ephemeralSignature: '0x' as `0x${string}`
     }
 
-    // Pre-encode paymasterSignature for debugging
-    const paymasterSignature = encodeAbiParameters(
-      [
-        {
-          type: 'tuple[]',
-          components: [
-            { type: 'bytes32', name: 'requestId' },
-            { type: 'address', name: 'originationXlpAddress' },
-            {
-              type: 'tuple',
-              name: 'voucherRequestDest',
-              components: [
-                { type: 'uint256', name: 'chainId' },
-                { type: 'address', name: 'paymaster' },
-                { type: 'address', name: 'sender' },
-                {
-                  type: 'tuple[]',
-                  name: 'assets',
-                  components: [
-                    { type: 'address', name: 'erc20Token' },
-                    { type: 'uint256', name: 'amount' }
-                  ]
-                },
-                { type: 'uint256', name: 'maxUserOpCost' },
-                { type: 'uint256', name: 'expiresAt' }
-              ]
-            },
-            { type: 'uint256', name: 'expiresAt' },
-            { type: 'uint8', name: 'voucherType' },
-            { type: 'bytes', name: 'xlpSignature' }
-          ]
-        },
-        {
-          type: 'tuple',
-          components: [
-            { type: 'bytes', name: 'data' },
-            { type: 'bytes', name: 'ephemeralSignature' }
-          ]
-        }
-      ],
-      [[voucher], sessionData]
-    )
-
-    // Add paymasterSignature to the pre-signed UserOp2
-    // This replaces the empty signature section in paymasterAndData
     const paymasterAndDataWithSig = addPaymasterSignatureToPaymasterAndData(
       paymasterAndDataWithoutSig,
       [voucher], // vouchers array
       sessionData
     )
-
-    // Debug: Check paymasterAndData format
-    console.log(
-      'paymasterAndDataWithoutSig length:',
-      paymasterAndDataWithoutSig.length
-    )
-    console.log(
-      'paymasterAndDataWithSig length:',
-      paymasterAndDataWithSig.length
-    )
-    console.log(
-      'paymasterAndDataWithoutSig ends with:',
-      paymasterAndDataWithoutSig.slice(-20)
-    )
-    console.log(
-      'paymasterAndDataWithSig ends with:',
-      paymasterAndDataWithSig.slice(-20)
-    )
-
-    // Verify format: should end with sigLen (2 bytes) + MAGIC (8 bytes)
-    const PAYMASTER_SIG_MAGIC = '0x22e325a297439656'
-    const magicAtEnd =
-      paymasterAndDataWithSig.slice(-16) === PAYMASTER_SIG_MAGIC.slice(2)
-    const sigLenHex = paymasterAndDataWithSig.slice(-20, -16)
-    const sigLen = parseInt(sigLenHex, 16)
-    const expectedSigLen = (paymasterSignature.length - 2) / 2
-    console.log('MAGIC at end:', magicAtEnd)
-    console.log('Signature length (hex):', sigLenHex, '=', sigLen, 'bytes')
-    console.log('Expected signature length:', expectedSigLen, 'bytes')
-    if (sigLen !== expectedSigLen) {
-      throw new Error(
-        `Signature length mismatch: got ${sigLen}, expected ${expectedSigLen}`
-      )
-    }
-
-    // Update UserOp2's paymasterAndData with the signature
-    // The signature field remains unchanged (still valid from pre-signing)
     withdrawUserOp.paymasterAndData = paymasterAndDataWithSig
 
-    // Verify paymasterDataKeccak logic (according to EntryPoint implementation)
-    // According to Helpers.sol paymasterDataKeccak:
-    // - If pmSignatureLength == 0: hash entire paymasterAndData
-    // - If pmSignatureLength > 0: hash paymasterAndData[0:length - (sigLen + 10)] then append MAGIC
-    // PAYMASTER_SUFFIX_LEN = 10 (2 bytes length + 8 bytes MAGIC)
-    const PAYMASTER_SUFFIX_LEN = 10
-    const PAYMASTER_SIG_MAGIC_VALUE = '0x22e325a297439656'
-
-    // Parse paymasterAndDataWithSig to get signature length
-    const withSigHex = paymasterAndDataWithSig.slice(2) // Remove '0x'
-    const withSigMagic = withSigHex.slice(-16) // Last 16 hex chars = 8 bytes
-    const withSigLengthHex = withSigHex.slice(-20, -16) // 2 bytes before MAGIC
-    const withSigLength = parseInt(withSigLengthHex, 16)
-    console.log('With sig - MAGIC:', withSigMagic)
-    console.log('With sig - length:', withSigLengthHex, '=', withSigLength)
-
-    // Verify that paymasterAndDataWithoutSig contains a fake signature suffix
-    // This ensures EntryPoint's paymasterDataKeccak hashes the same structure in both cases
-    const withoutSigHex = paymasterAndDataWithoutSig.slice(2)
-    const endsWithMagic =
-      withoutSigHex.slice(-16) === PAYMASTER_SIG_MAGIC_VALUE.slice(2)
-    console.log('Without sig ends with MAGIC:', endsWithMagic)
-    if (!endsWithMagic) {
-      throw new Error(
-        'paymasterAndDataWithoutSig should end with PAYMASTER_SIG_MAGIC (fake signature suffix). ' +
-          'This ensures userOpHash consistency because EntryPoint hashes the same structure in both cases.'
-      )
-    }
-    // Parse fake signature length
-    const fakeSigLenHex = withoutSigHex.slice(-20, -16)
-    const fakeSigLen = parseInt(fakeSigLenHex, 16)
-    console.log(
-      `✓ paymasterAndDataWithoutSig contains fake signature (length: ${fakeSigLen} bytes)`
-    )
-
-    // According to EntryPoint's paymasterDataKeccak implementation:
-    // - If pmSignatureLength == 0: hash entire paymasterAndData
-    // - If pmSignatureLength > 0: hash paymasterAndData[0:length - (sigLen + 10)] + MAGIC
-    //
-    // With our implementation (paymasterAndDataWithoutSig contains uint16(0) || MAGIC):
-    // - Without sig: EntryPoint hashes entire paymasterAndDataWithoutSig = base || uint16(0) || MAGIC
-    // - With sig: EntryPoint hashes paymasterAndDataWithSig[0:length - (sigLen + 10)] + MAGIC
-    //   = base || paymasterSignature || uint16(sigLen) || MAGIC 的前 [length - (sigLen + 10)] 字节 + MAGIC
-    //   = base + MAGIC
-    //
-    // These are NOT equal! base || uint16(0) || MAGIC ≠ base + MAGIC
-    //
-    // To make them equal, we need EntryPoint to hash base + MAGIC in both cases.
-    // But EntryPoint doesn't do that when pmSignatureLength == 0.
-    //
-    // Actually, wait. Let me reconsider. When pmSignatureLength == 0 and paymasterAndData ends with
-    // uint16(0) || MAGIC, EntryPoint still hashes the entire paymasterAndData including uint16(0) || MAGIC.
-    // So we can't make them equal this way.
-    //
-    // The solution: We need paymasterAndDataWithoutSig to be just "base" (no MAGIC), and EntryPoint
-    // should hash "base + MAGIC" when pmSignatureLength == 0. But EntryPoint doesn't do that.
-    //
-    // This suggests that EntryPoint's implementation may not fully support parallelizable signing
-    // when paymasterAndData doesn't end with MAGIC. However, the user's requirement is clear:
-    // - Initial sigLen = 0 (no MAGIC in paymasterAndDataWithoutSig)
-    // - paymasterDataLen consistent
-    //
-    // Let me check if there's another way...
-
-    // For withoutSig: EntryPoint hashes entire paymasterAndData (including uint16(0) || MAGIC)
-    const expectedHashDataWithoutSig = paymasterAndDataWithoutSig
-
-    // For withSig: EntryPoint hashes paymasterAndData[0:length - (sigLen + 10)] then appends MAGIC
-    const totalBytes = (paymasterAndDataWithSig.length - 2) / 2
-    const hashLengthBytes = totalBytes - (withSigLength + PAYMASTER_SUFFIX_LEN)
-    const hashData = '0x' + withSigHex.slice(0, hashLengthBytes * 2)
-    const expectedHashDataWithSig =
-      hashData + PAYMASTER_SIG_MAGIC_VALUE.slice(2) // Append MAGIC (without 0x)
-
-    // Remove uint16(0) from expectedHashDataWithoutSig to compare with expectedHashDataWithSig
-    // If paymasterAndDataWithoutSig ends with uint16(0) || MAGIC, remove the last 20 hex chars (uint16(0) + MAGIC)
-    const withoutSigBase = paymasterAndDataWithoutSig.slice(0, -20) // Remove last 20 hex chars (uint16(0) + MAGIC)
-    const expectedHashDataWithoutSigWithoutUint16 =
-      withoutSigBase + PAYMASTER_SIG_MAGIC_VALUE.slice(2) // Add only MAGIC
-
-    // Verify that expectedHashDataWithSig equals expectedHashDataWithoutSigWithoutUint16
-    const expectedHashDataWithSigFromWithoutSig =
-      expectedHashDataWithoutSigWithoutUint16
-
-    console.log(
-      'EntryPoint without sig hashes:',
-      expectedHashDataWithoutSig.slice(0, 100) + '...',
-      'length:',
-      expectedHashDataWithoutSig.length
-    )
-    console.log(
-      'EntryPoint with sig hashes:',
-      expectedHashDataWithSig.slice(0, 100) + '...',
-      'length:',
-      expectedHashDataWithSig.length
-    )
-    console.log(
-      'Expected with sig (from without sig, removing uint16(0)):',
-      expectedHashDataWithSigFromWithoutSig.slice(0, 100) + '...',
-      'length:',
-      expectedHashDataWithSigFromWithoutSig.length
-    )
-    console.log(
-      'Are they equal?',
-      expectedHashDataWithSig === expectedHashDataWithSigFromWithoutSig
-    )
-
-    if (expectedHashDataWithSig !== expectedHashDataWithSigFromWithoutSig) {
-      // This is expected because EntryPoint's paymasterDataKeccak implementation
-      // hashes different data when pmSignatureLength == 0 vs > 0.
-      // However, we need to verify if userOpHash actually changes.
-      console.log(
-        '⚠️  Hash data differs, but this may be acceptable if EntryPoint handles it correctly'
-      )
-    }
-
-    // Verify userOpHash doesn't change after adding paymasterSignature
-    // According to ERC-4337 v0.9, paymasterSignature is NOT included in userOpHash
-    const userOpBefore = {
-      ...withdrawUserOp,
-      paymasterAndData: paymasterAndDataWithoutSig
-    }
-    const userOpAfter = {
-      ...withdrawUserOp,
-      paymasterAndData: paymasterAndDataWithSig
-    }
-
-    const userOpHashBefore = await entryPoint.read.getUserOpHash([userOpBefore])
-    const userOpHashAfter = await entryPoint.read.getUserOpHash([userOpAfter])
-
-    console.log('UserOpHash before adding signature:', userOpHashBefore)
-    console.log('UserOpHash after adding signature:', userOpHashAfter)
-    console.log('Original withdrawUserOpHash:', withdrawUserOpHash)
-
-    // Update the hash reference for the actual UserOp
-    withdrawUserOp.paymasterAndData = paymasterAndDataWithSig
-
-    // Verify that userOpHash remains unchanged after adding paymasterSignature
-    // According to ERC-4337 v0.9 spec, paymasterSignature should NOT affect userOpHash
-    // However, EntryPoint's paymasterDataKeccak implementation hashes differently:
-    // - When pmSignatureLength == 0: hashes entire paymasterAndData
-    // - When pmSignatureLength > 0: hashes paymasterAndData[0:length - (sigLen + 10)] + MAGIC
-    // These are different data sets, causing userOpHash to change
-    if (userOpHashAfter !== userOpHashBefore) {
-      console.warn(
-        `⚠️  UserOpHash changed after adding paymasterSignature! Before: ${userOpHashBefore}, After: ${userOpHashAfter}`
-      )
-      console.warn(
-        "This is due to EntryPoint's paymasterDataKeccak implementation hashing different data when sigLen == 0 vs sigLen > 0"
-      )
-    } else {
-      console.log(
-        '✓ UserOpHash unchanged after adding paymasterSignature (as expected)'
-      )
-    }
-
-    // Verify paymasterDataLen consistency
-    // According to getSignedPaymasterData logic:
-    // - If sigLen = 0: paymasterDataLen = paymasterAndData.length (in bytes)
-    // - If sigLen > 0: paymasterDataLen = paymasterAndData.length - (sigLen + PAYMASTER_SUFFIX_LEN)
-    // The returned data is paymasterAndData[PAYMASTER_DATA_OFFSET : paymasterDataLen]
-    // So the actual paymasterData length (excluding offset) is: paymasterDataLen - PAYMASTER_DATA_OFFSET
-    const PAYMASTER_DATA_OFFSET = 52 // paymaster(20) + verificationGasLimit(16) + postOpGasLimit(16) = 52 bytes
-
-    // Convert hex string length to byte length: (hexString.length - 2) / 2
-    // (subtract 2 for '0x' prefix, divide by 2 because each byte is 2 hex chars)
-    const getByteLength = (hexString: `0x${string}`): number => {
-      return (hexString.length - 2) / 2
-    }
-
-    // Calculate paymasterDataLen as EntryPoint's getSignedPaymasterData does (in bytes)
-    // fakeSigLen was already parsed above (around line 624)
-    let paymasterDataLenWithoutSig = getByteLength(paymasterAndDataWithoutSig)
-    if (fakeSigLen !== 0) {
-      paymasterDataLenWithoutSig -= fakeSigLen + PAYMASTER_SUFFIX_LEN
-    }
-
-    let paymasterDataLenWithSig = getByteLength(paymasterAndDataWithSig)
-    if (withSigLength !== 0) {
-      paymasterDataLenWithSig -= withSigLength + PAYMASTER_SUFFIX_LEN
-    }
-
-    // The actual paymasterData (excluding offset) length
-    const actualPaymasterDataLenWithoutSig =
-      paymasterDataLenWithoutSig - PAYMASTER_DATA_OFFSET
-    const actualPaymasterDataLenWithSig =
-      paymasterDataLenWithSig - PAYMASTER_DATA_OFFSET
-
-    console.log(
-      'paymasterDataLen (full) without sig:',
-      paymasterDataLenWithoutSig
-    )
-    console.log('paymasterDataLen (full) with sig:', paymasterDataLenWithSig)
-    console.log(
-      'actualPaymasterDataLen (excluding offset) without sig:',
-      actualPaymasterDataLenWithoutSig
-    )
-    console.log(
-      'actualPaymasterDataLen (excluding offset) with sig:',
-      actualPaymasterDataLenWithSig
-    )
-    console.log(
-      'paymasterDataLen equal?',
-      paymasterDataLenWithoutSig === paymasterDataLenWithSig
-    )
-
-    if (paymasterDataLenWithoutSig !== paymasterDataLenWithSig) {
-      throw new Error(
-        `paymasterDataLen mismatch! Without sig: ${paymasterDataLenWithoutSig}, With sig: ${paymasterDataLenWithSig}`
-      )
-    }
-    console.log('✓ paymasterDataLen consistent (as expected)')
-    console.log('✓ PaymasterSignature added to UserOp2')
-    console.log('✓ UserOp2 is ready to execute with both signatures')
-
-    // Check Alice's AA account balance before
     const aliceBalanceBefore = await publicClient.getBalance({
       address: aliceAccountAddress
     })
@@ -857,12 +555,14 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     )
 
     // XLP withdraws user's locked funds from origin chain
-    await paymasterAsOriginXlp.write.withdrawFromUserDeposit([[voucherRequest]])
+    await (paymasterAsOriginXlp as any).write.withdrawFromUserDeposit([
+      [voucherRequest]
+    ])
 
     // Verify final status
-    const finalMetadata = await paymasterAsOrigin.read.getAtomicSwapMetadata([
-      requestId
-    ])
+    const finalMetadata = await (
+      paymasterAsOrigin as any
+    ).read.getAtomicSwapMetadata([requestId])
     assert.equal(
       finalMetadata.core.status,
       6,
@@ -960,21 +660,23 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     }
 
     // Alice locks funds
-    await paymasterAsOrigin.write.lockUserDeposit([voucherRequest])
+    await (paymasterAsOrigin as any).write.lockUserDeposit([voucherRequest])
 
     const requestId = getVoucherRequestId(voucherRequest)
-    console.log('Request created, ID:', requestId)
 
     // Wait for USER_CANCELLATION_DELAY (5 minutes)
     await networkHelpers.time.increase(301n)
 
     // Alice cancels the request
-    await paymasterAsOrigin.write.cancelVoucherRequest([voucherRequest])
+    await (paymasterAsOrigin as any).write.cancelVoucherRequest([
+      voucherRequest
+    ])
 
     // Verify status changed to CANCELLED
-    const metadata = await paymasterAsOrigin.read.getAtomicSwapMetadata([
-      requestId
-    ])
+
+    const metadata = await (
+      paymasterAsOrigin as any
+    ).read.getAtomicSwapMetadata([requestId])
     assert.equal(metadata.core.status, 3, 'Status should be CANCELLED (3)')
 
     // Verify Alice received original amount back (without fee)
@@ -1173,11 +875,12 @@ function encodePaymasterAndDataWithoutSignature(
   // (base || signature || uint16(length) || MAGIC) in both cases
   if (fakeSignatureLength !== undefined && fakeSignatureLength > 0) {
     // Create fake signature (all zeros) with the specified length
-    const fakeSignature = '0x' + '00'.repeat(fakeSignatureLength)
+    const fakeSignature = ('0x' +
+      '00'.repeat(fakeSignatureLength)) as `0x${string}`
     const sigLengthHex = pad(toHex(BigInt(fakeSignatureLength)), { size: 2 })
 
     return concat([
-      base,
+      base as `0x${string}`,
       fakeSignature,
       sigLengthHex,
       PAYMASTER_SIG_MAGIC
@@ -1243,91 +946,40 @@ function addPaymasterSignatureToPaymasterAndData(
     [vouchers, sessionData]
   )
 
-  // Calculate signature length in bytes (hex string: 2 chars = 1 byte)
   const sigLengthBytes = (paymasterSignature.length - 2) / 2
-  // pad with size: 2 means 2 bytes = 4 hex characters (excluding 0x prefix)
-  // So we need to ensure it's exactly 4 hex chars for uint16
   const sigLengthHex = pad(toHex(BigInt(sigLengthBytes)), { size: 2 })
-
-  // Debug: Verify sigLengthHex format
-  if (sigLengthHex.length !== 6 || !sigLengthHex.startsWith('0x')) {
-    throw new Error(
-      `Invalid sigLengthHex format: ${sigLengthHex}, length: ${sigLengthHex.length}`
-    )
-  }
-  // Extract hex part without 0x prefix for concat
   const sigLengthHexWithoutPrefix = sigLengthHex.slice(2)
-  if (sigLengthHexWithoutPrefix.length !== 4) {
-    throw new Error(
-      `sigLengthHex should be 4 hex chars (2 bytes), got: ${sigLengthHexWithoutPrefix.length} chars: ${sigLengthHexWithoutPrefix}`
-    )
-  }
-
-  // Check if paymasterAndDataWithoutSig already contains a signature suffix (fake signature)
   const magicHex = PAYMASTER_SIG_MAGIC.slice(2) // Remove '0x' prefix
   const magicIndex = paymasterAndDataWithoutSig.lastIndexOf(magicHex)
 
   if (magicIndex !== -1) {
-    // paymasterAndDataWithoutSig contains a fake signature suffix
-    // Structure: base || fakeSignature || uint16(fakeSigLen) || MAGIC
-    // MAGIC is at the end (16 hex chars), uint16 is 4 hex chars before MAGIC
     const uint16Hex = paymasterAndDataWithoutSig.slice(
       magicIndex - 4,
       magicIndex
     )
     const fakeSigLen = parseInt(uint16Hex, 16)
-
-    // Extract the base (everything before the fake signature)
-    // base ends at: magicIndex - 4 (uint16) - fakeSigLen * 2 (fakeSignature in hex)
     const baseEndIndex = magicIndex - 4 - fakeSigLen * 2
     const base = paymasterAndDataWithoutSig.slice(0, baseEndIndex)
 
-    // Verify that fake signature length matches real signature length
     if (fakeSigLen !== sigLengthBytes) {
       throw new Error(
-        `Fake signature length (${fakeSigLen}) does not match real signature length (${sigLengthBytes}). ` +
-          `This will cause userOpHash to change. Please ensure fakeSignatureLength matches the real signature length.`
+        `Fake signature length (${fakeSigLen}) does not match real signature length (${sigLengthBytes})`
       )
     }
 
-    // Replace fake signature with real signature
-    const paymasterAndData = concat([
-      base,
+    return concat([
+      base as `0x${string}`,
       paymasterSignature,
       sigLengthHex,
       PAYMASTER_SIG_MAGIC
     ]) as `0x${string}`
-
-    // Verify the format: should end with sigLen (4 hex chars) + MAGIC (16 hex chars)
-    const expectedEnd = sigLengthHexWithoutPrefix + PAYMASTER_SIG_MAGIC.slice(2)
-    const actualEnd = paymasterAndData.slice(-20)
-    if (actualEnd !== expectedEnd) {
-      throw new Error(
-        `paymasterAndData format error! Expected end: ${expectedEnd}, actual end: ${actualEnd}`
-      )
-    }
-
-    return paymasterAndData
   } else {
-    // paymasterAndDataWithoutSig is just the base (no signature suffix)
-    // Append the signature suffix
-    const paymasterAndData = concat([
-      paymasterAndDataWithoutSig, // base: paymaster(20) || verificationGasLimit(16) || postOpGasLimit(16) || paymasterData
-      paymasterSignature, // paymasterSignature (already has 0x prefix)
-      sigLengthHex, // uint16(signatureLength) - has 0x prefix, concat will handle it
-      PAYMASTER_SIG_MAGIC // PAYMASTER_SIG_MAGIC (has 0x prefix)
+    return concat([
+      paymasterAndDataWithoutSig,
+      paymasterSignature,
+      sigLengthHex,
+      PAYMASTER_SIG_MAGIC
     ]) as `0x${string}`
-
-    // Verify the format: should end with sigLen (4 hex chars) + MAGIC (16 hex chars)
-    const expectedEnd = sigLengthHexWithoutPrefix + PAYMASTER_SIG_MAGIC.slice(2)
-    const actualEnd = paymasterAndData.slice(-20)
-    if (actualEnd !== expectedEnd) {
-      throw new Error(
-        `paymasterAndData format error! Expected end: ${expectedEnd}, actual end: ${actualEnd}`
-      )
-    }
-
-    return paymasterAndData
   }
 }
 
@@ -1357,7 +1009,6 @@ function encodePaymasterAndData(
   )
 }
 
-// Helper function: Calculate VoucherRequest ID
 function getVoucherRequestId(voucherRequest: any): `0x${string}` {
   const encoded = encodeAbiParameters(
     [
