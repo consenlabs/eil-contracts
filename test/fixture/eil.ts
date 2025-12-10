@@ -1,5 +1,16 @@
-import { maxUint256, parseEther, zeroAddress } from 'viem'
+import {
+  getAddress,
+  getContract,
+  maxUint256,
+  parseEther,
+  zeroAddress,
+  type Address,
+  type PublicClient,
+  type WalletClient
+} from 'viem'
 
+import CrossChainPaymasterArtifact from '../../artifacts/src/CrossChainPaymaster.sol/CrossChainPaymaster.json'
+import OriginSwapManagerArtifact from '../../artifacts/src/origin/OriginSwapManager.sol/OriginSwapManager.json'
 import { getDeployer, getNetwork } from '../util/network.ts'
 import { erc4337Fixture } from './erc4337.ts'
 
@@ -109,6 +120,32 @@ export async function createEilFixture(options: EilFixtureOptions = {}) {
     deployConfig
   )
 
+  /**
+   * Get a CrossChainPaymaster contract reference with OriginSwapManager ABI.
+   * This is needed because CrossChainPaymaster delegates calls to OriginSwapManager via Proxy.
+   */
+  const getPaymasterWithOriginAbi = (client: PublicClient | WalletClient) => {
+    return getContract({
+      address: crossChainPaymaster.address as Address,
+      abi: OriginSwapManagerArtifact.abi,
+      client
+    })
+  }
+
+  /**
+   * Get a CrossChainPaymaster contract reference with CrossChainPaymaster ABI.
+   * This provides access to destination swap functionality directly implemented by CrossChainPaymaster.
+   */
+  const getPaymasterWithDestinationAbi = (
+    client: PublicClient | WalletClient
+  ) => {
+    return getContract({
+      address: crossChainPaymaster.address as Address,
+      abi: CrossChainPaymasterArtifact.abi,
+      client
+    })
+  }
+
   return {
     entryPoint,
     crossChainPaymaster,
@@ -117,7 +154,9 @@ export async function createEilFixture(options: EilFixtureOptions = {}) {
     l2ArbConnector,
     originSwapManager,
     arbInboxMock,
-    arbOutboxMock
+    arbOutboxMock,
+    getPaymasterWithOriginAbi,
+    getPaymasterWithDestinationAbi
   }
 }
 

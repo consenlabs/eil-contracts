@@ -24,18 +24,6 @@ import { getDeployer, getNetwork } from '../util/network.ts'
 const NATIVE_ETH = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE' as const
 
 /**
- * Get a CrossChainPaymaster contract reference with OriginSwapManager ABI.
- * This is needed because CrossChainPaymaster delegates calls to OriginSwapManager via Proxy.
- */
-function getPaymasterWithOriginAbi(crossChainPaymaster: any, client: any) {
-  return getContract({
-    address: crossChainPaymaster.address,
-    abi: OriginSwapManagerArtifact.abi,
-    client
-  })
-}
-
-/**
  * EIL Cross-Chain Atomic Swap Integration Tests
  *
  * Complete flow based on the sequence diagram:
@@ -61,6 +49,8 @@ describe('Cross-Chain Atomic Swap Integration', () => {
   let fixture: any
   let crossChainPaymaster: any
   let entryPoint: any
+  let getPaymasterWithOriginAbi: any
+  let getPaymasterWithDestinationAbi: any
 
   // Setup shared resources for all tests
   before(async () => {
@@ -83,6 +73,8 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     fixture = await createEilFixture()
     crossChainPaymaster = fixture.crossChainPaymaster
     entryPoint = fixture.entryPoint
+    getPaymasterWithOriginAbi = fixture.getPaymasterWithOriginAbi
+    getPaymasterWithDestinationAbi = fixture.getPaymasterWithDestinationAbi
   })
 
   /**
@@ -116,14 +108,8 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     console.log('✓ Alice SimpleMultiChainAccount:', aliceAccountAddress)
 
     // Get paymaster reference with OriginSwapManager ABI
-    const paymasterAsOrigin = getPaymasterWithOriginAbi(
-      crossChainPaymaster,
-      alice
-    )
-    const paymasterAsOriginXlp = getPaymasterWithOriginAbi(
-      crossChainPaymaster,
-      xlpOperator
-    )
+    const paymasterAsOrigin = getPaymasterWithOriginAbi(alice)
+    const paymasterAsOriginXlp = getPaymasterWithOriginAbi(xlpOperator)
 
     // ========================================
     // Step 1: Lookup registered & funded XLPs
@@ -608,10 +594,7 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     const alice = walletClients[0]
 
     // Get paymaster reference with OriginSwapManager ABI
-    const paymasterAsOrigin = getPaymasterWithOriginAbi(
-      crossChainPaymaster,
-      alice
-    )
+    const paymasterAsOrigin = getPaymasterWithOriginAbi(alice)
 
     const chainId = await publicClient.getChainId()
     const currentBlock = await publicClient.getBlock()
@@ -666,7 +649,9 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     }
 
     // Alice locks funds
-    await (paymasterAsOrigin as any).write.lockUserDeposit([voucherRequest])
+    await (paymasterAsOrigin as any).write.lockUserDeposit([voucherRequest], {
+      account: alice.account
+    })
 
     const requestId = getVoucherRequestId(voucherRequest)
 
@@ -674,9 +659,10 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     await networkHelpers.time.increase(301n)
 
     // Alice cancels the request
-    await (paymasterAsOrigin as any).write.cancelVoucherRequest([
-      voucherRequest
-    ])
+    await (paymasterAsOrigin as any).write.cancelVoucherRequest(
+      [voucherRequest],
+      { account: alice.account }
+    )
 
     // Verify status changed to CANCELLED
 
