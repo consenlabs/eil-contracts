@@ -4,25 +4,25 @@ import { getDeployer, getNetwork } from '../util/network.ts'
 import { erc4337Fixture } from './erc4337.ts'
 
 export interface EilFixtureOptions {
-  // Dispute period delay (default 1 second for fast testing)
+  // Dispute period delay (default 1 hour)
   voucherUnlockDelay?: bigint
-  // Time before dispute expires (default 1 second)
+  // Time before dispute expires (default 7 days)
   timeBeforeDisputeExpires?: bigint
-  // User cancellation delay (default 1 second)
+  // User cancellation delay (default 5 minutes)
   userCancellationDelay?: bigint
-  // Voucher minimum expiration time (default 1 second)
+  // Voucher minimum expiration time (default 1 minute)
   voucherMinExpirationTime?: bigint
-  // Whether to disable L2 Connector (allows direct XLP registration in test environment)
+  // Whether to disable L2 Connector (default true, allows direct XLP registration in test environment)
   disableL2Connector?: boolean
 }
 
 export async function createEilFixture(options: EilFixtureOptions = {}) {
   const {
-    voucherUnlockDelay = 1n,
-    timeBeforeDisputeExpires = 1n,
-    userCancellationDelay = 1n,
-    voucherMinExpirationTime = 1n,
-    disableL2Connector = false
+    voucherUnlockDelay = 3600n, // 1 hour
+    timeBeforeDisputeExpires = 604800n, // 7 days
+    userCancellationDelay = 300n, // 5 minutes
+    voucherMinExpirationTime = 60n, // 1 minute
+    disableL2Connector = true // Allow direct XLP registration
   } = options
 
   const { viem, networkHelpers } = await getNetwork()
@@ -109,20 +109,6 @@ export async function createEilFixture(options: EilFixtureOptions = {}) {
     deployConfig
   )
 
-  // Deploy test ERC20 token
-  const testToken = await viem.deployContract(
-    'TestERC20',
-    ['Test Token', 'TT', 18],
-    deployConfig
-  )
-
-  // Deploy DummyAccount for testing
-  const dummyAccount = await viem.deployContract(
-    'DummyAccount',
-    [],
-    deployConfig
-  )
-
   return {
     entryPoint,
     crossChainPaymaster,
@@ -131,27 +117,13 @@ export async function createEilFixture(options: EilFixtureOptions = {}) {
     l2ArbConnector,
     originSwapManager,
     arbInboxMock,
-    arbOutboxMock,
-    testToken,
-    dummyAccount,
-    deployer
+    arbOutboxMock
   }
 }
 
-// Default fixture (backward compatible)
+// Default fixture (uses realistic time params by default)
 export async function eilFixture() {
   return createEilFixture()
-}
-
-// Integration test fixture (disable L2 Connector, use realistic time params)
-export async function eilIntegrationFixture() {
-  return createEilFixture({
-    voucherUnlockDelay: 3600n, // 1 hour
-    timeBeforeDisputeExpires: 604800n, // 7 days
-    userCancellationDelay: 300n, // 5 minutes
-    voucherMinExpirationTime: 60n, // 1 minute
-    disableL2Connector: true // Allow direct XLP registration
-  })
 }
 
 export async function loadEilFixture() {

@@ -16,7 +16,7 @@ describe('Fixture', () => {
 
   it('should load EIL fixture', async () => {
     const eilFixture = await loadEilFixture()
-    // Verify all contract addresses (excluding deployer and other non-contract objects)
+    // Verify all contract addresses
     const contracts = [
       eilFixture.crossChainPaymaster,
       eilFixture.l1StakeManager,
@@ -24,9 +24,7 @@ describe('Fixture', () => {
       eilFixture.l2ArbConnector,
       eilFixture.originSwapManager,
       eilFixture.arbInboxMock,
-      eilFixture.arbOutboxMock,
-      eilFixture.testToken,
-      eilFixture.dummyAccount
+      eilFixture.arbOutboxMock
     ]
     for (const contract of contracts) {
       assert.equal(isAddress(contract.address), true)

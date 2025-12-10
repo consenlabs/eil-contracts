@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { describe, it } from 'node:test'
+import { before, describe, it } from 'node:test'
 
 import {
   concat,
@@ -51,6 +51,40 @@ function getPaymasterWithOriginAbi(crossChainPaymaster: any, client: any) {
  * 10. XLP Unlock & reuse funds (XLP withdraws funds from origin chain)
  */
 describe('Cross-Chain Atomic Swap Integration', () => {
+  let testToken: any
+  let viem: any
+  let networkHelpers: any
+  let publicClient: any
+  let walletClients: any[]
+  let deployer: any
+  let deployConfig: any
+  let fixture: any
+  let crossChainPaymaster: any
+  let entryPoint: any
+
+  // Setup shared resources for all tests
+  before(async () => {
+    const network = await getNetwork()
+    viem = network.viem
+    networkHelpers = network.networkHelpers
+    publicClient = await viem.getPublicClient()
+    walletClients = await viem.getWalletClients()
+    deployer = await getDeployer()
+    deployConfig = { client: { wallet: deployer } }
+
+    // Deploy testToken
+    testToken = await viem.deployContract(
+      'TestERC20',
+      ['Test Token', 'TT', 18],
+      deployConfig
+    )
+
+    // Create EIL fixture (default params work for all tests)
+    fixture = await createEilFixture()
+    crossChainPaymaster = fixture.crossChainPaymaster
+    entryPoint = fixture.entryPoint
+  })
+
   /**
    * Complete cross-chain atomic swap flow test using SimpleMultiChainAccount.
    * Simulates Alice transferring assets from Chain_A to Chain_B via ERC-4337 UserOp.
@@ -59,25 +93,8 @@ describe('Cross-Chain Atomic Swap Integration', () => {
    * so all origin and destination operations go through crossChainPaymaster.
    */
   it('should complete cross-chain swap with SimpleMultiChainAccount', async () => {
-    const { viem, networkHelpers } = await getNetwork()
-    const publicClient = await viem.getPublicClient()
-    const walletClients = await viem.getWalletClients()
-
     const alice = walletClients[0] // User (EOA owner of SimpleMultiChainAccount)
     const xlpOperator = walletClients[1] // XLP operator
-    const deployer = await getDeployer()
-    const deployConfig = { client: { wallet: deployer } }
-
-    // Create EIL fixture
-    const fixture = await createEilFixture({
-      voucherUnlockDelay: 3600n,
-      timeBeforeDisputeExpires: 604800n,
-      userCancellationDelay: 300n,
-      voucherMinExpirationTime: 60n,
-      disableL2Connector: true
-    })
-
-    const { crossChainPaymaster, testToken, entryPoint } = fixture
 
     // Deploy SimpleMultiChainAccountFactory using the same EntryPoint
     const simpleMultiChainAccountFactory = await viem.deployContract(
@@ -180,12 +197,14 @@ describe('Cross-Chain Atomic Swap Integration', () => {
       client: alice
     })
 
-    // Deposit ETH to EntryPoint for SimpleMultiChainAccount to pay for gas
-    await aliceAccount.write.addDeposit([], {
+    // Send ETH directly to SimpleMultiChainAccount for gas payment
+    // Account can pay ETH at need without deposit to EntryPoint in advance
+    await alice.sendTransaction({
+      to: aliceAccountAddress,
       value: parseEther('1'),
       account: alice.account
     })
-    console.log('✓ Deposited ETH to EntryPoint for AA account')
+    console.log('✓ Sent ETH to AA account for gas payment')
 
     // Approve tokens via UserOp
     const approveCallData = encodeFunctionData({
@@ -586,20 +605,7 @@ describe('Cross-Chain Atomic Swap Integration', () => {
    * When no XLP claims, user can cancel after USER_CANCELLATION_DELAY.
    */
   it('should allow user to cancel if no XLP claims', async () => {
-    const { viem, networkHelpers } = await getNetwork()
-    const publicClient = await viem.getPublicClient()
-    const walletClients = await viem.getWalletClients()
-
     const alice = walletClients[0]
-    const deployer = await getDeployer()
-
-    // Use shorter cancellation delay for testing
-    const fixture = await createEilFixture({
-      userCancellationDelay: 300n, // 5 minutes
-      disableL2Connector: true
-    })
-
-    const { crossChainPaymaster, testToken } = fixture
 
     // Get paymaster reference with OriginSwapManager ABI
     const paymasterAsOrigin = getPaymasterWithOriginAbi(
@@ -696,14 +702,9 @@ describe('Cross-Chain Atomic Swap Integration', () => {
    * Test XLP balance queries.
    */
   it('should correctly query XLP balances and registration status', async () => {
-    const { viem } = await getNetwork()
-    const walletClients = await viem.getWalletClients()
-
-    const xlp1 = walletClients[1]
-    const xlp2 = walletClients[2]
-
-    const fixture = await createEilFixture({ disableL2Connector: true })
-    const { crossChainPaymaster } = fixture
+    // Use different accounts to avoid conflicts with previous tests
+    const xlp1 = walletClients[2]
+    const xlp2 = walletClients[3]
 
     // Register two XLPs
     await crossChainPaymaster.write.onL1XlpChainInfoAdded([
@@ -747,9 +748,20 @@ describe('Cross-Chain Atomic Swap Integration', () => {
       parseEther('3')
     )
 
-    // Query XLP list
+    // Query XLP list (may include XLPs from previous tests)
     const xlps = await crossChainPaymaster.read.getXlps([0n, 10n])
-    assert.equal(xlps.length, 2, 'Should have 2 registered XLPs')
+    assert.ok(xlps.length >= 2, 'Should have at least 2 registered XLPs')
+    // Verify our two XLPs are in the list
+    // XlpEntry is a struct with l1XlpAddress and l2XlpAddress
+    const xlpL2Addresses = xlps.map((x: any) => getAddress(x.l2XlpAddress))
+    assert.ok(
+      xlpL2Addresses.includes(getAddress(xlp1.account.address)),
+      'xlp1 should be registered'
+    )
+    assert.ok(
+      xlpL2Addresses.includes(getAddress(xlp2.account.address)),
+      'xlp2 should be registered'
+    )
 
     console.log('✓ XLP registration and balance queries work correctly')
   })
