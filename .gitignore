@@ -1,5 +1,4 @@
-mainnet.log
-arbitrum.log
+*.log
 
 # Node modules
 /node_modules

@@ -14,7 +14,6 @@ import {
   zeroAddress
 } from 'viem'
 
-import CrossChainPaymasterArtifact from '../../artifacts/src/CrossChainPaymaster.sol/CrossChainPaymaster.json'
 import OriginSwapManagerArtifact from '../../artifacts/src/origin/OriginSwapManager.sol/OriginSwapManager.json'
 import SimpleMultiChainAccountArtifact from '../../artifacts/src/test/SimpleMultiChainAccount.sol/SimpleMultiChainAccount.json'
 import TestERC20Artifact from '../../artifacts/src/test/TestERC20.sol/TestERC20.json'
@@ -163,10 +162,9 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     console.log('\n=== Step 2 & 3: Alice commits funds on origin chain ===')
     const chainId = await publicClient.getChainId()
     const currentTimestamp = BigInt(await networkHelpers.time.latest())
-    // Get nonce for SimpleMultiChainAccount (not EOA)
-    const aliceAccountNonce = await paymasterAsOrigin.read.getSenderNonce([
-      aliceAccountAddress
-    ])
+    const aliceAccountNonce = await (
+      paymasterAsOrigin as any
+    ).read.getSenderNonce([aliceAccountAddress])
 
     const swapAmount = parseEther('1')
     const maxFeePercent = 100n
@@ -233,7 +231,26 @@ describe('Cross-Chain Atomic Swap Integration', () => {
       }
     }
 
-    // Lock user deposit via UserOp
+    const requestId = getVoucherRequestId(voucherRequest)
+    console.log('✓ Request ID:', requestId)
+
+    // ========================================
+    // Step 2.5: Pre-sign UserOp1 and UserOp2 (EntryPoint v0.9 parallelizable signing)
+    // ========================================
+    console.log(
+      '\n=== Step 2.5: Pre-sign UserOp1 and UserOp2 (before getting voucher) ==='
+    )
+    console.log(
+      'Using EntryPoint v0.9 parallelizable Paymaster signing feature:'
+    )
+    console.log(
+      '- userOpHash does NOT include paymasterSignature, allowing pre-signing'
+    )
+    console.log(
+      '- User can sign UserOp before voucher is ready, then add paymasterSignature later'
+    )
+
+    // Build UserOp1: Lock user deposit (no paymaster needed)
     const lockDepositCallData = encodeFunctionData({
       abi: OriginSwapManagerArtifact.abi,
       functionName: 'lockUserDeposit',
@@ -244,24 +261,129 @@ describe('Cross-Chain Atomic Swap Integration', () => {
       functionName: 'execute',
       args: [crossChainPaymaster.address, 0n, lockDepositCallData]
     })
+    // Get current nonce for UserOp1
+    const currentNonce = await entryPoint.read.getNonce([
+      aliceAccountAddress,
+      0n
+    ])
+
     const { userOp: lockUserOp, userOpHash: lockUserOpHash } =
       await buildUserOp(
         aliceAccountAddress,
         entryPoint,
-        executeLockDepositCallData
+        executeLockDepositCallData,
+        '0x',
+        currentNonce as bigint
       )
-    lockUserOp.signature = signUserOp(lockUserOpHash)
+
+    // Build UserOp2: Use voucher (with paymaster, but WITHOUT paymasterSignature yet)
+    // Build DestinationVoucherRequestsData (we know the structure even without voucher)
+    const destinationVoucherRequestsData = {
+      vouchersAssetsMinimums: [voucherRequest.destination.assets],
+      ephemeralSigner: zeroAddress
+    }
+
+    // Pre-calculate paymasterSignature length using a placeholder voucher
+    // This allows us to create a fake signature with the same length
+    // Structure: AtomicSwapVoucher[] + SessionData
+    // We use a placeholder voucher with a fixed-length xlpSignature (65 bytes for ECDSA)
+    const placeholderVoucher = {
+      requestId,
+      originationXlpAddress: zeroAddress,
+      voucherRequestDest: voucherRequest.destination,
+      expiresAt: 0n,
+      voucherType: 0,
+      xlpSignature: ('0x' + '00'.repeat(65)) as `0x${string}`
+    }
+    const placeholderSessionData = {
+      data: '0x' as `0x${string}`,
+      ephemeralSignature: '0x' as `0x${string}`
+    }
+    const placeholderPaymasterSignature = encodeAbiParameters(
+      [
+        {
+          type: 'tuple[]',
+          components: [
+            { type: 'bytes32', name: 'requestId' },
+            { type: 'address', name: 'originationXlpAddress' },
+            {
+              type: 'tuple',
+              name: 'voucherRequestDest',
+              components: [
+                { type: 'uint256', name: 'chainId' },
+                { type: 'address', name: 'paymaster' },
+                { type: 'address', name: 'sender' },
+                {
+                  type: 'tuple[]',
+                  name: 'assets',
+                  components: [
+                    { type: 'address', name: 'erc20Token' },
+                    { type: 'uint256', name: 'amount' }
+                  ]
+                },
+                { type: 'uint256', name: 'maxUserOpCost' },
+                { type: 'uint256', name: 'expiresAt' }
+              ]
+            },
+            { type: 'uint256', name: 'expiresAt' },
+            { type: 'uint8', name: 'voucherType' },
+            { type: 'bytes', name: 'xlpSignature' }
+          ]
+        },
+        {
+          type: 'tuple',
+          components: [
+            { type: 'bytes', name: 'data' },
+            { type: 'bytes', name: 'ephemeralSignature' }
+          ]
+        }
+      ],
+      [[placeholderVoucher], placeholderSessionData]
+    )
+    const fakeSignatureLength = (placeholderPaymasterSignature.length - 2) / 2 // Convert hex string length to bytes
+
+    // Build paymasterAndData WITH fake signature (for parallelizable signing)
+    // This ensures userOpHash consistency because EntryPoint's paymasterDataKeccak
+    // will hash the same structure (base || signature || uint16(length) || MAGIC) in both cases
+    const paymasterAndDataWithoutSig = encodePaymasterAndDataWithoutSignature(
+      getAddress(crossChainPaymaster.address),
+      100000n, // validationGasLimit
+      50000n, // postOpGasLimit
+      destinationVoucherRequestsData,
+      fakeSignatureLength // Add fake signature with this length
+    )
+
+    const noOpCallData = encodeFunctionData({
+      abi: SimpleMultiChainAccountArtifact.abi,
+      functionName: 'execute',
+      args: [aliceAccountAddress, 0n, '0x'] // No-op: call self with empty data
+    })
+
+    // Use nonce + 1 for UserOp2 (since UserOp1 will execute first)
+    const { userOp: withdrawUserOp, userOpHash: withdrawUserOpHash } =
+      await buildUserOp(
+        aliceAccountAddress,
+        entryPoint,
+        noOpCallData,
+        paymasterAndDataWithoutSig,
+        (currentNonce as bigint) + 1n // Use next nonce for UserOp2
+      )
+
+    // Sign both UserOps with a unified signature
+    const unifiedSignature = concat([
+      pad(lockUserOpHash, { size: 32 }),
+      pad(withdrawUserOpHash, { size: 32 })
+    ]) as `0x${string}`
+    lockUserOp.signature = unifiedSignature
+    withdrawUserOp.signature = unifiedSignature
+
+    // Execute UserOp1
     await entryPoint.write.handleOps([[lockUserOp], alice.account.address])
 
-    const requestId = getVoucherRequestId(voucherRequest)
-    console.log('✓ Request ID:', requestId)
-
-    // Verify swap status was created
-    const metadata = await paymasterAsOrigin.read.getAtomicSwapMetadata([
-      requestId
-    ])
+    const metadata = await (
+      paymasterAsOrigin as any
+    ).read.getAtomicSwapMetadata([requestId])
     assert.equal(metadata.core.status, 1, 'Status should be NEW (1)')
-    console.log('✓ Atomic swap created with status NEW via UserOp')
 
     // ========================================
     // Step 4: XLP Claim funds (gives voucher)
@@ -321,13 +443,14 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     }
 
     // XLP issues voucher (needs to be called with XLP's account)
-    await paymasterAsOriginXlp.write.issueVouchers([
+    await (paymasterAsOriginXlp as any).write.issueVouchers([
       [{ voucherRequest, voucher }]
     ])
 
     // Verify voucher is issued
-    const metadataAfterVoucher =
-      await paymasterAsOrigin.read.getAtomicSwapMetadata([requestId])
+    const metadataAfterVoucher = await (
+      paymasterAsOrigin as any
+    ).read.getAtomicSwapMetadata([requestId])
     assert.equal(
       metadataAfterVoucher.core.status,
       2,
@@ -356,15 +479,18 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     )
     console.log('✓ Voucher ready for use on destination chain')
 
-    // Alice uses voucher via UserOp with Paymaster
-    const voucherForWithdraw = voucher
-
-    // Build DestinationVoucherRequestsData
-    // vouchersAssetsMinimums: minimum amounts for each voucher (can be same as voucher amounts)
-    const destinationVoucherRequestsData = {
-      vouchersAssetsMinimums: [voucherRequest.destination.assets], // Minimum amounts for the voucher
-      ephemeralSigner: zeroAddress // No ephemeral signer for this test
-    }
+    // ========================================
+    // Step 5.5: Add paymasterSignature to pre-signed UserOp2
+    // ========================================
+    console.log(
+      '\n=== Step 5.5: Add paymasterSignature to pre-signed UserOp2 ==='
+    )
+    console.log(
+      'Now that voucher is ready, we can add paymasterSignature to UserOp2'
+    )
+    console.log(
+      'The pre-signed signature remains valid because userOpHash does not include paymasterSignature'
+    )
 
     // Build SessionData (empty for this test)
     const sessionData = {
@@ -372,38 +498,19 @@ describe('Cross-Chain Atomic Swap Integration', () => {
       ephemeralSignature: '0x' as `0x${string}`
     }
 
-    // Encode paymasterAndData
-    const paymasterAndData = encodePaymasterAndData(
-      getAddress(crossChainPaymaster.address),
-      100000n, // validationGasLimit
-      50000n, // postOpGasLimit
-      destinationVoucherRequestsData,
-      [voucherForWithdraw], // vouchers array
+    const paymasterAndDataWithSig = addPaymasterSignatureToPaymasterAndData(
+      paymasterAndDataWithoutSig,
+      [voucher], // vouchers array
       sessionData
     )
+    withdrawUserOp.paymasterAndData = paymasterAndDataWithSig
 
-    // Check Alice's AA account balance before
     const aliceBalanceBefore = await publicClient.getBalance({
       address: aliceAccountAddress
     })
     console.log('Alice AA account balance before:', aliceBalanceBefore)
 
-    // Build UserOp with paymaster (callData can be empty or a no-op)
-    // The paymaster will handle the voucher withdrawal in _validatePaymasterUserOp
-    const noOpCallData = encodeFunctionData({
-      abi: SimpleMultiChainAccountArtifact.abi,
-      functionName: 'execute',
-      args: [aliceAccountAddress, 0n, '0x'] // No-op: call self with empty data
-    })
-
-    const { userOp: withdrawUserOp, userOpHash: withdrawUserOpHash } =
-      await buildUserOp(
-        aliceAccountAddress,
-        entryPoint,
-        noOpCallData,
-        paymasterAndData
-      )
-    withdrawUserOp.signature = signUserOp(withdrawUserOpHash)
+    // Execute pre-signed UserOp2 (signature was already added earlier)
     await entryPoint.write.handleOps([[withdrawUserOp], alice.account.address])
 
     // Verify destination swap status
@@ -448,12 +555,14 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     )
 
     // XLP withdraws user's locked funds from origin chain
-    await paymasterAsOriginXlp.write.withdrawFromUserDeposit([[voucherRequest]])
+    await (paymasterAsOriginXlp as any).write.withdrawFromUserDeposit([
+      [voucherRequest]
+    ])
 
     // Verify final status
-    const finalMetadata = await paymasterAsOrigin.read.getAtomicSwapMetadata([
-      requestId
-    ])
+    const finalMetadata = await (
+      paymasterAsOrigin as any
+    ).read.getAtomicSwapMetadata([requestId])
     assert.equal(
       finalMetadata.core.status,
       6,
@@ -551,21 +660,23 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     }
 
     // Alice locks funds
-    await paymasterAsOrigin.write.lockUserDeposit([voucherRequest])
+    await (paymasterAsOrigin as any).write.lockUserDeposit([voucherRequest])
 
     const requestId = getVoucherRequestId(voucherRequest)
-    console.log('Request created, ID:', requestId)
 
     // Wait for USER_CANCELLATION_DELAY (5 minutes)
     await networkHelpers.time.increase(301n)
 
     // Alice cancels the request
-    await paymasterAsOrigin.write.cancelVoucherRequest([voucherRequest])
+    await (paymasterAsOrigin as any).write.cancelVoucherRequest([
+      voucherRequest
+    ])
 
     // Verify status changed to CANCELLED
-    const metadata = await paymasterAsOrigin.read.getAtomicSwapMetadata([
-      requestId
-    ])
+
+    const metadata = await (
+      paymasterAsOrigin as any
+    ).read.getAtomicSwapMetadata([requestId])
     assert.equal(metadata.core.status, 3, 'Status should be CANCELLED (3)')
 
     // Verify Alice received original amount back (without fee)
@@ -651,9 +762,12 @@ async function buildUserOp(
   accountAddress: `0x${string}`,
   entryPoint: any,
   callData: `0x${string}`,
-  paymasterAndData: `0x${string}` = '0x'
+  paymasterAndData: `0x${string}` = '0x',
+  nonce?: bigint
 ): Promise<any> {
-  const nonce = await entryPoint.read.getNonce([accountAddress, 0n])
+  // Use provided nonce or get current nonce
+  const userOpNonce =
+    nonce ?? (await entryPoint.read.getNonce([accountAddress, 0n]))
 
   // Pack accountGasLimits: uint128(verificationGasLimit) || uint128(callGasLimit)
   const verificationGasLimit = 500000n // Increased for complex operations
@@ -672,7 +786,7 @@ async function buildUserOp(
   // Build UserOperation (PackedUserOperation format)
   const userOp = {
     sender: accountAddress,
-    nonce,
+    nonce: userOpNonce,
     initCode: '0x' as `0x${string}`,
     callData,
     accountGasLimits: accountGasLimits as `0x${string}`,
@@ -699,22 +813,30 @@ function signUserOp(userOpHash: `0x${string}`): `0x${string}` {
 }
 
 /**
- * Encode paymasterAndData for CrossChainPaymaster
- * Format: paymaster(20) + validationGasLimit(16) + postOpGasLimit(16) + signedPaymasterData + paymasterSignature + uint16(sigLen) + PAYMASTER_SIG_MAGIC(8)
+ * Encode paymasterAndData WITHOUT paymasterSignature (for EntryPoint v0.9 parallelizable signing)
+ * Format: paymaster(20) + validationGasLimit(16) + postOpGasLimit(16) + paymasterData
+ * According to ERC-4337 v0.9 spec:
+ * - paymasterAndData (if non-empty) = paymaster(20) || verificationGasLimit(16) || postOpGasLimit(16) || paymasterData
+ * - paymasterSignature is added later by appending: paymasterSignature || uint16(paymasterSignature.length) || PAYMASTER_SIG_MAGIC
+ * This allows users to sign UserOp before getting the voucher, then add paymasterSignature later.
+ *
+ * @param fakeSignatureLength - Optional. If provided, adds a fake signature (all zeros) with this length
+ *                              and the suffix (uint16(length) || MAGIC). This ensures userOpHash consistency
+ *                              because EntryPoint's paymasterDataKeccak will hash the same data structure
+ *                              (base || signature || uint16(length) || MAGIC) in both cases.
  */
-function encodePaymasterAndData(
+function encodePaymasterAndDataWithoutSignature(
   paymasterAddress: `0x${string}`,
   validationGasLimit: bigint,
   postOpGasLimit: bigint,
   destinationVoucherRequestsData: any,
-  vouchers: any[],
-  sessionData: any
+  fakeSignatureLength?: number
 ): `0x${string}` {
   const PAYMASTER_SIG_MAGIC = '0x22e325a297439656' as const
-  const PAYMASTER_DATA_OFFSET = 52 // 20 + 16 + 16
+  const PAYMASTER_SUFFIX_LEN = 10 // uint16(2 bytes) + MAGIC(8 bytes)
 
-  // Encode signedPaymasterData (DestinationVoucherRequestsData)
-  const signedPaymasterData = encodeAbiParameters(
+  // Encode paymasterData (DestinationVoucherRequestsData)
+  const paymasterData = encodeAbiParameters(
     [
       {
         type: 'tuple',
@@ -739,6 +861,47 @@ function encodePaymasterAndData(
       }
     ]
   )
+
+  // Build base paymasterAndData
+  const base = concat([
+    pad(paymasterAddress, { size: 20 }), // paymaster address
+    pad(toHex(validationGasLimit), { size: 16 }), // validationGasLimit
+    pad(toHex(postOpGasLimit), { size: 16 }), // postOpGasLimit
+    paymasterData // paymasterData
+  ]) as `0x${string}`
+
+  // If fakeSignatureLength is provided, add fake signature + suffix
+  // This ensures EntryPoint's paymasterDataKeccak hashes the same structure
+  // (base || signature || uint16(length) || MAGIC) in both cases
+  if (fakeSignatureLength !== undefined && fakeSignatureLength > 0) {
+    // Create fake signature (all zeros) with the specified length
+    const fakeSignature = ('0x' +
+      '00'.repeat(fakeSignatureLength)) as `0x${string}`
+    const sigLengthHex = pad(toHex(BigInt(fakeSignatureLength)), { size: 2 })
+
+    return concat([
+      base as `0x${string}`,
+      fakeSignature,
+      sigLengthHex,
+      PAYMASTER_SIG_MAGIC
+    ]) as `0x${string}`
+  }
+
+  // Otherwise, return just the base (no signature suffix)
+  return base
+}
+
+/**
+ * Add paymasterSignature to existing paymasterAndData (EntryPoint v0.9 parallelizable signing)
+ * Replaces the fake signature section (if present) with the actual paymasterSignature
+ */
+function addPaymasterSignatureToPaymasterAndData(
+  paymasterAndDataWithoutSig: `0x${string}`,
+  vouchers: any[],
+  sessionData: any
+): `0x${string}` {
+  const PAYMASTER_SIG_MAGIC = '0x22e325a297439656' as const
+  const PAYMASTER_SUFFIX_LEN = 10 // uint16(2 bytes) + MAGIC(8 bytes)
 
   // Encode paymasterSignature (AtomicSwapVoucher[] + SessionData)
   const paymasterSignature = encodeAbiParameters(
@@ -783,25 +946,69 @@ function encodePaymasterAndData(
     [vouchers, sessionData]
   )
 
-  // Calculate signature length in bytes (hex string: 2 chars = 1 byte)
   const sigLengthBytes = (paymasterSignature.length - 2) / 2
   const sigLengthHex = pad(toHex(BigInt(sigLengthBytes)), { size: 2 })
+  const sigLengthHexWithoutPrefix = sigLengthHex.slice(2)
+  const magicHex = PAYMASTER_SIG_MAGIC.slice(2) // Remove '0x' prefix
+  const magicIndex = paymasterAndDataWithoutSig.lastIndexOf(magicHex)
 
-  // Build paymasterAndData
-  const paymasterAndData = concat([
-    pad(paymasterAddress, { size: 20 }), // paymaster address
-    pad(toHex(validationGasLimit), { size: 16 }), // validationGasLimit
-    pad(toHex(postOpGasLimit), { size: 16 }), // postOpGasLimit
-    signedPaymasterData, // signedPaymasterData
-    paymasterSignature, // paymasterSignature
-    sigLengthHex, // uint16(signatureLength)
-    PAYMASTER_SIG_MAGIC // PAYMASTER_SIG_MAGIC
-  ])
+  if (magicIndex !== -1) {
+    const uint16Hex = paymasterAndDataWithoutSig.slice(
+      magicIndex - 4,
+      magicIndex
+    )
+    const fakeSigLen = parseInt(uint16Hex, 16)
+    const baseEndIndex = magicIndex - 4 - fakeSigLen * 2
+    const base = paymasterAndDataWithoutSig.slice(0, baseEndIndex)
 
-  return paymasterAndData
+    if (fakeSigLen !== sigLengthBytes) {
+      throw new Error(
+        `Fake signature length (${fakeSigLen}) does not match real signature length (${sigLengthBytes})`
+      )
+    }
+
+    return concat([
+      base as `0x${string}`,
+      paymasterSignature,
+      sigLengthHex,
+      PAYMASTER_SIG_MAGIC
+    ]) as `0x${string}`
+  } else {
+    return concat([
+      paymasterAndDataWithoutSig,
+      paymasterSignature,
+      sigLengthHex,
+      PAYMASTER_SIG_MAGIC
+    ]) as `0x${string}`
+  }
 }
 
-// Helper function: Calculate VoucherRequest ID
+/**
+ * Encode paymasterAndData for CrossChainPaymaster (complete version with signature)
+ * Format: paymaster(20) + validationGasLimit(16) + postOpGasLimit(16) + signedPaymasterData + paymasterSignature + uint16(sigLen) + PAYMASTER_SIG_MAGIC(8)
+ * This is a convenience function that combines both steps.
+ */
+function encodePaymasterAndData(
+  paymasterAddress: `0x${string}`,
+  validationGasLimit: bigint,
+  postOpGasLimit: bigint,
+  destinationVoucherRequestsData: any,
+  vouchers: any[],
+  sessionData: any
+): `0x${string}` {
+  const paymasterAndDataWithoutSig = encodePaymasterAndDataWithoutSignature(
+    paymasterAddress,
+    validationGasLimit,
+    postOpGasLimit,
+    destinationVoucherRequestsData
+  )
+  return addPaymasterSignatureToPaymasterAndData(
+    paymasterAndDataWithoutSig,
+    vouchers,
+    sessionData
+  )
+}
+
 function getVoucherRequestId(voucherRequest: any): `0x${string}` {
   const encoded = encodeAbiParameters(
     [

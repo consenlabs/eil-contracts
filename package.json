@@ -9,9 +9,9 @@
     "prepack": "yarn build",
     "format": "prettier --write .",
     "test": "hardhat test",
-    "devnet:start": "nohup npx hardhat node --network mainnetMock --port 8545 > mainnet.log 2>&1 & nohup npx hardhat node --network arbitrumMock --port 8546 > arbitrum.log 2>&1 &",
-    "devnet:stop": "lsof -ti:8545 | xargs kill -9 2>/dev/null; lsof -ti:8546 | xargs kill -9 2>/dev/null; rm -f mainnet.log arbitrum.log; echo 'Devnets stopped and logs cleaned'",
-    "test:e2e": "hardhat test test/e2e/cross-chain.ts"
+    "devnet:up": "bash test/e2e/devnet-up.sh",
+    "devnet:down": "bash test/e2e/devnet-down.sh",
+    "test:e2e": "npm run devnet:up && hardhat test test/e2e/*.ts && npm run devnet:down"
   },
   "files": [
     "artifacts",
