@@ -15,8 +15,18 @@ describe('Fixture', () => {
   })
 
   it('should load EIL fixture', async () => {
-    const eilContract = await loadEilFixture()
-    for (const contract of Object.values(eilContract)) {
+    const eilFixture = await loadEilFixture()
+    // Verify all contract addresses
+    const contracts = [
+      eilFixture.crossChainPaymaster,
+      eilFixture.l1StakeManager,
+      eilFixture.l1ArbConnector,
+      eilFixture.l2ArbConnector,
+      eilFixture.originSwapManager,
+      eilFixture.arbInboxMock,
+      eilFixture.arbOutboxMock
+    ]
+    for (const contract of contracts) {
       assert.equal(isAddress(contract.address), true)
     }
   })
