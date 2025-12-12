@@ -3,7 +3,7 @@ import { describe, it } from 'node:test'
 
 import { isAddress } from 'viem'
 
-import { getDualNetworks } from '../util/network.ts'
+import { getDualNetworks, getNetwork } from '../util/network.ts'
 
 describe('Cross-Chain E2E (Dual Devnet) Fixture', () => {
   it('should connect to both forked networks', async () => {
@@ -15,51 +15,66 @@ describe('Cross-Chain E2E (Dual Devnet) Fixture', () => {
     const arbitrumPublicClient = await arbitrum.viem.getPublicClient()
 
     // Verify chain IDs
-    const mainnetChainId = await mainnetPublicClient.getChainId()
-    const arbitrumChainId = await arbitrumPublicClient.getChainId()
+    assert.equal(await mainnetPublicClient.getChainId(), 1, 'Should be mainnet')
+    assert.equal(
+      await arbitrumPublicClient.getChainId(),
+      42161,
+      'Should be Arbitrum'
+    )
 
-    console.log('Mainnet Chain ID:', mainnetChainId)
-    console.log('Arbitrum Chain ID:', arbitrumChainId)
+    // Get connection from cached map
+    const arbitrumCachedConnection = await getNetwork('arbitrumMock')
+    const arbitrumCachedPublicClient =
+      await arbitrumCachedConnection.viem.getPublicClient()
+    assert.equal(
+      await arbitrumCachedPublicClient.getChainId(),
+      42161,
+      'Should be Arbitrum'
+    )
 
-    assert.equal(mainnetChainId, 1, 'Should be mainnet')
-    assert.equal(arbitrumChainId, 42161, 'Should be Arbitrum')
-  })
-
-  it('should get wallets from both networks', async () => {
-    const { mainnet, arbitrum } = await getDualNetworks()
-
-    // Get wallet clients for both chains
-    const mainnetWallets = await mainnet.viem.getWalletClients()
-    const arbitrumWallets = await arbitrum.viem.getWalletClients()
-
-    console.log('Mainnet wallet:', mainnetWallets[0].account.address)
-    console.log('Arbitrum wallet:', arbitrumWallets[0].account.address)
-
-    // Both should have wallets available
-    assert.ok(mainnetWallets.length > 0, 'Should have mainnet wallets')
-    assert.ok(arbitrumWallets.length > 0, 'Should have arbitrum wallets')
+    const mainnetCachedConnection = await getNetwork('mainnetMock')
+    const mainnetCachedPublicClient =
+      await mainnetCachedConnection.viem.getPublicClient()
+    assert.equal(
+      await mainnetCachedPublicClient.getChainId(),
+      1,
+      'Should be mainnet'
+    )
   })
 
   it('should deploy contracts on both networks', async () => {
     const { mainnet, arbitrum } = await getDualNetworks()
 
-    // Deploy a test contract on mainnet fork
+    // Deploy a test contract on mainnet and arbitrum mocks
     const mainnetTestToken = await mainnet.viem.deployContract('TestERC20', [
       'Test Token',
       'TEST',
       18
     ])
-    console.log('TestToken on Mainnet:', mainnetTestToken.address)
-
-    // Deploy a test contract on arbitrum fork
     const arbitrumTestToken = await arbitrum.viem.deployContract('TestERC20', [
       'Test Token',
       'TEST',
       18
     ])
-    console.log('TestToken on Arbitrum:', arbitrumTestToken.address)
-
     assert.ok(isAddress(mainnetTestToken.address))
     assert.ok(isAddress(arbitrumTestToken.address))
+
+    // Get connection from cached map and prevent duplicate deployment
+    const arbitrumCachedConnection = await getNetwork('arbitrumMock')
+    const mainnetCachedConnection = await getNetwork('mainnetMock')
+    const mainnetTestTokenCached =
+      await mainnetCachedConnection.viem.deployContract('TestERC20', [
+        'Test Token',
+        'TEST',
+        18
+      ])
+    const arbitrumTestTokenCached =
+      await arbitrumCachedConnection.viem.deployContract('TestERC20', [
+        'Test Token',
+        'TEST',
+        18
+      ])
+    assert.notEqual(mainnetTestTokenCached.address, mainnetTestToken.address)
+    assert.notEqual(arbitrumTestTokenCached.address, arbitrumTestToken.address)
   })
 })

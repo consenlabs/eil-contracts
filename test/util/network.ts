@@ -1,15 +1,17 @@
 import hre from 'hardhat'
 import { NetworkConnection } from 'hardhat/types/network'
 
-let network: NetworkConnection | null = null
+const networks = new Map<string, NetworkConnection>()
 
 export async function getNetwork(networkName?: string) {
-  if (!network) {
-    network = networkName
+  const key = networkName ?? ''
+  if (!networks.has(key)) {
+    const connection = networkName
       ? await hre.network.connect(networkName)
       : await hre.network.connect()
+    networks.set(key, connection)
   }
-  return network
+  return networks.get(key)!
 }
 
 export async function getDualNetworks() {
