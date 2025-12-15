@@ -6,7 +6,6 @@ import {
   encodeAbiParameters,
   encodeFunctionData,
   getAddress,
-  getContract,
   keccak256,
   pad,
   parseEther,
@@ -17,7 +16,18 @@ import {
 import OriginSwapManagerArtifact from '../../artifacts/src/origin/OriginSwapManager.sol/OriginSwapManager.json'
 import SimpleMultiChainAccountArtifact from '../../artifacts/src/test/SimpleMultiChainAccount.sol/SimpleMultiChainAccount.json'
 import TestERC20Artifact from '../../artifacts/src/test/TestERC20.sol/TestERC20.json'
-import { createEilFixture } from '../fixture/eil.ts'
+import {
+  createEilFixture,
+  type AtomicSwapMetadataReturnType,
+  type AtomicSwapVoucher,
+  type AtomicSwapVoucherRequest,
+  type DestinationVoucherRequestsData,
+  type EntryPointContractType,
+  type OriginSwapManagerContractType,
+  type PackedUserOperation,
+  type SessionData,
+  type XlpEntry
+} from '../fixture/eil.ts'
 import { getDeployer, getNetwork } from '../util/network.ts'
 
 // Native ETH address used by the contract (not address(0)!)
@@ -93,8 +103,10 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     console.log('✓ Alice SimpleMultiChainAccount:', aliceAccountAddress)
 
     // Get paymaster reference with OriginSwapManager ABI
-    const paymasterAsOrigin = fixture.getPaymasterWithOriginAbi(alice)
-    const paymasterAsOriginXlp = fixture.getPaymasterWithOriginAbi(xlpOperator)
+    const paymasterAsOrigin: OriginSwapManagerContractType =
+      fixture.getPaymasterWithOriginAbi(alice)
+    const paymasterAsOriginXlp: OriginSwapManagerContractType =
+      fixture.getPaymasterWithOriginAbi(xlpOperator)
 
     // ========================================
     // Step 1: Lookup registered & funded XLPs
@@ -155,9 +167,9 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     console.log('\n=== Step 2 & 3: Alice commits funds on origin chain ===')
     const chainId = await network.publicClient.getChainId()
     const currentTimestamp = BigInt(await network.networkHelpers.time.latest())
-    const aliceAccountNonce = await (
-      paymasterAsOrigin as any
-    ).read.getSenderNonce([aliceAccountAddress])
+    const aliceAccountNonce = (await paymasterAsOrigin.read.getSenderNonce([
+      aliceAccountAddress
+    ])) as bigint
 
     const swapAmount = parseEther('1')
     const maxFeePercent = 100n
@@ -165,13 +177,6 @@ describe('Cross-Chain Atomic Swap Integration', () => {
 
     // Mint tokens directly to SimpleMultiChainAccount
     await testToken.write.sudoMint([aliceAccountAddress, amountWithMaxFee])
-
-    // Get SimpleMultiChainAccount contract reference
-    const aliceAccount = getContract({
-      address: aliceAccountAddress,
-      abi: SimpleMultiChainAccountArtifact.abi,
-      client: alice
-    })
 
     // Send ETH directly to SimpleMultiChainAccount for gas payment
     // Account can pay ETH at need without deposit to EntryPoint in advance
@@ -264,10 +269,10 @@ describe('Cross-Chain Atomic Swap Integration', () => {
       args: [fixture.crossChainPaymaster.address, 0n, lockDepositCallData]
     })
     // Get current nonce for UserOp1
-    const currentNonce = await fixture.entryPoint.read.getNonce([
+    const currentNonce = (await fixture.entryPoint.read.getNonce([
       aliceAccountAddress,
       0n
-    ])
+    ])) as bigint
 
     const { userOp: lockUserOp, userOpHash: lockUserOpHash } =
       await buildUserOp(
@@ -385,9 +390,9 @@ describe('Cross-Chain Atomic Swap Integration', () => {
       alice.account.address
     ])
 
-    const metadata = await (
-      paymasterAsOrigin as any
-    ).read.getAtomicSwapMetadata([requestId])
+    const metadata = (await paymasterAsOrigin.read.getAtomicSwapMetadata([
+      requestId
+    ])) as AtomicSwapMetadataReturnType
     assert.equal(metadata.core.status, 1, 'Status should be NEW (1)')
 
     // ========================================
@@ -448,14 +453,15 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     }
 
     // XLP issues voucher (needs to be called with XLP's account)
-    await (paymasterAsOriginXlp as any).write.issueVouchers([
+    await paymasterAsOriginXlp.write.issueVouchers([
       [{ voucherRequest, voucher }]
     ])
 
     // Verify voucher is issued
-    const metadataAfterVoucher = await (
-      paymasterAsOrigin as any
-    ).read.getAtomicSwapMetadata([requestId])
+    const metadataAfterVoucher =
+      (await paymasterAsOrigin.read.getAtomicSwapMetadata([
+        requestId
+      ])) as AtomicSwapMetadataReturnType
     assert.equal(
       metadataAfterVoucher.core.status,
       2,
@@ -563,14 +569,12 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     )
 
     // XLP withdraws user's locked funds from origin chain
-    await (paymasterAsOriginXlp as any).write.withdrawFromUserDeposit([
-      [voucherRequest]
-    ])
+    await paymasterAsOriginXlp.write.withdrawFromUserDeposit([[voucherRequest]])
 
     // Verify final status
-    const finalMetadata = await (
-      paymasterAsOrigin as any
-    ).read.getAtomicSwapMetadata([requestId])
+    const finalMetadata = (await paymasterAsOrigin.read.getAtomicSwapMetadata([
+      requestId
+    ])) as AtomicSwapMetadataReturnType
     assert.equal(
       finalMetadata.core.status,
       6,
@@ -598,11 +602,11 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     const alice = network.walletClients[0]
 
     // Get paymaster reference with OriginSwapManager ABI
-    const paymasterAsOrigin = fixture.getPaymasterWithOriginAbi(alice)
+    const paymasterAsOrigin: OriginSwapManagerContractType =
+      fixture.getPaymasterWithOriginAbi(alice)
 
     const chainId = await network.publicClient.getChainId()
-    const currentBlock = await network.publicClient.getBlock()
-    const currentTimestamp = currentBlock.timestamp
+    const currentTimestamp = BigInt(await network.networkHelpers.time.latest())
 
     // Mint tokens to Alice
     const swapAmount = parseEther('1')
@@ -653,7 +657,7 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     }
 
     // Alice locks funds
-    await (paymasterAsOrigin as any).write.lockUserDeposit([voucherRequest], {
+    await paymasterAsOrigin.write.lockUserDeposit([voucherRequest], {
       account: alice.account
     })
 
@@ -663,16 +667,14 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     await network.networkHelpers.time.increase(301n)
 
     // Alice cancels the request
-    await (paymasterAsOrigin as any).write.cancelVoucherRequest(
-      [voucherRequest],
-      { account: alice.account }
-    )
+    await paymasterAsOrigin.write.cancelVoucherRequest([voucherRequest], {
+      account: alice.account
+    })
 
     // Verify status changed to CANCELLED
-
-    const metadata = await (
-      paymasterAsOrigin as any
-    ).read.getAtomicSwapMetadata([requestId])
+    const metadata = (await paymasterAsOrigin.read.getAtomicSwapMetadata([
+      requestId
+    ])) as AtomicSwapMetadataReturnType
     assert.equal(metadata.core.status, 3, 'Status should be CANCELLED (3)')
 
     // Verify Alice received original amount back (without fee)
@@ -753,11 +755,14 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     )
 
     // Query XLP list (may include XLPs from previous tests)
-    const xlps = await fixture.crossChainPaymaster.read.getXlps([0n, 10n])
+    const xlps: XlpEntry[] = await fixture.crossChainPaymaster.read.getXlps([
+      0n,
+      10n
+    ])
     assert.ok(xlps.length >= 2, 'Should have at least 2 registered XLPs')
     // Verify our two XLPs are in the list
     // XlpEntry is a struct with l1XlpAddress and l2XlpAddress
-    const xlpL2Addresses = xlps.map((x: any) => getAddress(x.l2XlpAddress))
+    const xlpL2Addresses = xlps.map((x: XlpEntry) => getAddress(x.l2XlpAddress))
     assert.ok(
       xlpL2Addresses.includes(getAddress(xlp1.account.address)),
       'xlp1 should be registered'
@@ -776,14 +781,17 @@ describe('Cross-Chain Atomic Swap Integration', () => {
  */
 async function buildUserOp(
   accountAddress: `0x${string}`,
-  entryPoint: any,
+  entryPoint: EntryPointContractType,
   callData: `0x${string}`,
   paymasterAndData: `0x${string}` = '0x',
   nonce?: bigint
-): Promise<any> {
+): Promise<{ userOp: PackedUserOperation; userOpHash: `0x${string}` }> {
   // Use provided nonce or get current nonce
-  const userOpNonce =
-    nonce ?? (await entryPoint.read.getNonce([accountAddress, 0n]))
+  const currentNonce = (await entryPoint.read.getNonce([
+    accountAddress,
+    0n
+  ])) as bigint
+  const userOpNonce = nonce ?? currentNonce
 
   // Pack accountGasLimits: uint128(verificationGasLimit) || uint128(callGasLimit)
   const verificationGasLimit = 500000n // Increased for complex operations
@@ -800,7 +808,7 @@ async function buildUserOp(
     pad(toHex(maxFeePerGas), { size: 16 }).slice(2)
 
   // Build UserOperation (PackedUserOperation format)
-  const userOp = {
+  const userOp: PackedUserOperation = {
     sender: accountAddress,
     nonce: userOpNonce,
     initCode: '0x' as `0x${string}`,
@@ -813,7 +821,9 @@ async function buildUserOp(
   }
 
   // Calculate userOpHash
-  const userOpHash = await entryPoint.read.getUserOpHash([userOp])
+  const userOpHash = (await entryPoint.read.getUserOpHash([
+    userOp
+  ])) as `0x${string}`
 
   return { userOp, userOpHash }
 }
@@ -845,11 +855,10 @@ function encodePaymasterAndDataWithoutSignature(
   paymasterAddress: `0x${string}`,
   validationGasLimit: bigint,
   postOpGasLimit: bigint,
-  destinationVoucherRequestsData: any,
+  destinationVoucherRequestsData: DestinationVoucherRequestsData,
   fakeSignatureLength?: number
 ): `0x${string}` {
   const PAYMASTER_SIG_MAGIC = '0x22e325a297439656' as const
-  const PAYMASTER_SUFFIX_LEN = 10 // uint16(2 bytes) + MAGIC(8 bytes)
 
   // Encode paymasterData (DestinationVoucherRequestsData)
   const paymasterData = encodeAbiParameters(
@@ -896,7 +905,7 @@ function encodePaymasterAndDataWithoutSignature(
     const sigLengthHex = pad(toHex(BigInt(fakeSignatureLength)), { size: 2 })
 
     return concat([
-      base as `0x${string}`,
+      base,
       fakeSignature,
       sigLengthHex,
       PAYMASTER_SIG_MAGIC
@@ -913,11 +922,10 @@ function encodePaymasterAndDataWithoutSignature(
  */
 function addPaymasterSignatureToPaymasterAndData(
   paymasterAndDataWithoutSig: `0x${string}`,
-  vouchers: any[],
-  sessionData: any
+  vouchers: AtomicSwapVoucher[],
+  sessionData: SessionData
 ): `0x${string}` {
   const PAYMASTER_SIG_MAGIC = '0x22e325a297439656' as const
-  const PAYMASTER_SUFFIX_LEN = 10 // uint16(2 bytes) + MAGIC(8 bytes)
 
   // Encode paymasterSignature (AtomicSwapVoucher[] + SessionData)
   const paymasterSignature = encodeAbiParameters(
@@ -964,7 +972,6 @@ function addPaymasterSignatureToPaymasterAndData(
 
   const sigLengthBytes = (paymasterSignature.length - 2) / 2
   const sigLengthHex = pad(toHex(BigInt(sigLengthBytes)), { size: 2 })
-  const sigLengthHexWithoutPrefix = sigLengthHex.slice(2)
   const magicHex = PAYMASTER_SIG_MAGIC.slice(2) // Remove '0x' prefix
   const magicIndex = paymasterAndDataWithoutSig.lastIndexOf(magicHex)
 
@@ -999,33 +1006,9 @@ function addPaymasterSignatureToPaymasterAndData(
   }
 }
 
-/**
- * Encode paymasterAndData for CrossChainPaymaster (complete version with signature)
- * Format: paymaster(20) + validationGasLimit(16) + postOpGasLimit(16) + signedPaymasterData + paymasterSignature + uint16(sigLen) + PAYMASTER_SIG_MAGIC(8)
- * This is a convenience function that combines both steps.
- */
-function encodePaymasterAndData(
-  paymasterAddress: `0x${string}`,
-  validationGasLimit: bigint,
-  postOpGasLimit: bigint,
-  destinationVoucherRequestsData: any,
-  vouchers: any[],
-  sessionData: any
+function getVoucherRequestId(
+  voucherRequest: AtomicSwapVoucherRequest
 ): `0x${string}` {
-  const paymasterAndDataWithoutSig = encodePaymasterAndDataWithoutSignature(
-    paymasterAddress,
-    validationGasLimit,
-    postOpGasLimit,
-    destinationVoucherRequestsData
-  )
-  return addPaymasterSignatureToPaymasterAndData(
-    paymasterAndDataWithoutSig,
-    vouchers,
-    sessionData
-  )
-}
-
-function getVoucherRequestId(voucherRequest: any): `0x${string}` {
   const encoded = encodeAbiParameters(
     [
       {
