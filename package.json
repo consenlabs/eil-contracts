@@ -9,8 +9,8 @@
     "prepack": "yarn build",
     "format": "prettier --write .",
     "test": "hardhat test",
-    "devnet:up": "bash test/e2e/devnet-up.sh",
-    "devnet:down": "bash test/e2e/devnet-down.sh",
+    "devnet:up": "bash test/shell/devnet-up.sh",
+    "devnet:down": "bash test/shell/devnet-down.sh",
     "test:e2e": "npm run devnet:up && hardhat test test/e2e/*.ts && npm run devnet:down"
   },
   "files": [
