@@ -118,11 +118,11 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     // Create Alice's SimpleMultiChainAccount
     await mainnetSimpleMultiChainAccountFactory.write.createAccount([
       alice.account.address,
-      1n // salt = 1 for Alice
+      1n // salt = 1 for Alice's Mainnet account
     ])
     await arbitrumSimpleMultiChainAccountFactory.write.createAccount([
       alice.account.address,
-      1n // salt = 2 for Alice
+      2n // salt = 2 for Alice's Arbitrum account
     ])
     const aliceMainnetAccountAddress =
       await mainnetSimpleMultiChainAccountFactory.read.getAddress([
@@ -132,7 +132,7 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     const aliceArbitrumAccountAddress =
       await arbitrumSimpleMultiChainAccountFactory.read.getAddress([
         alice.account.address,
-        1n
+        2n
       ])
     console.log(
       '✓ Alice Mainnet SimpleMultiChainAccount:',
@@ -280,7 +280,7 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     const voucherRequest = {
       origination: {
         chainId: BigInt(originChainId),
-        paymaster: getAddress(arbitrumFixture.crossChainPaymaster.address),
+        paymaster: getAddress(mainnetFixture.crossChainPaymaster.address),
         sender: getAddress(aliceMainnetAccountAddress), // SimpleMultiChainAccount as origin sender
         assets: [
           {
@@ -689,37 +689,44 @@ describe('Cross-Chain Atomic Swap Integration', () => {
    * When no XLP claims, user can cancel after USER_CANCELLATION_DELAY.
    */
   it('should allow user to cancel if no XLP claims', async () => {
-    return
-    const alice = network.walletClients[0]
+    const alice = await getWalletClient('mainnetMock', 0)
 
     // Get paymaster reference with OriginSwapManager ABI
     const paymasterAsOrigin: OriginSwapManagerContractType =
-      fixture.getPaymasterWithOriginAbi(alice)
+      mainnetFixture.getPaymasterWithOriginAbi(alice)
 
-    const chainId = await network.publicClient.getChainId()
-    const currentTimestamp = BigInt(await network.networkHelpers.time.latest())
+    const originChainId = await (
+      await mainnet.viem.getPublicClient()
+    ).getChainId()
+    const destinationChainId = await (
+      await arbitrum.viem.getPublicClient()
+    ).getChainId()
+    const currentTimestamp = BigInt(await mainnet.networkHelpers.time.latest())
 
     // Mint tokens to Alice
     const swapAmount = parseEther('1')
     const maxFeePercent = 100n
     const amountWithMaxFee = swapAmount + (swapAmount * maxFeePercent) / 10000n
 
-    await testToken.write.sudoMint([alice.account.address, amountWithMaxFee])
-    await testToken.write.sudoApprove([
+    await mainnetTestToken.write.sudoMint([
       alice.account.address,
-      fixture.crossChainPaymaster.address,
+      amountWithMaxFee
+    ])
+    await mainnetTestToken.write.sudoApprove([
+      alice.account.address,
+      mainnetFixture.crossChainPaymaster.address,
       amountWithMaxFee
     ])
 
     // Build request
     const voucherRequest = {
       origination: {
-        chainId: BigInt(chainId),
-        paymaster: getAddress(fixture.crossChainPaymaster.address),
+        chainId: BigInt(originChainId),
+        paymaster: getAddress(mainnetFixture.crossChainPaymaster.address),
         sender: getAddress(alice.account.address),
         assets: [
           {
-            erc20Token: getAddress(testToken.address),
+            erc20Token: getAddress(mainnetTestToken.address),
             amount: swapAmount
           }
         ],
@@ -730,11 +737,11 @@ describe('Cross-Chain Atomic Swap Integration', () => {
           unspentVoucherFee: parseEther('0.01')
         },
         senderNonce: 0n,
-        allowedXlps: [deployer.account.address] // An XLP that won't claim
+        allowedXlps: [mainnetDeployer.account.address] // An XLP that won't claim
       },
       destination: {
-        chainId: BigInt(chainId),
-        paymaster: getAddress(fixture.crossChainPaymaster.address),
+        chainId: BigInt(destinationChainId),
+        paymaster: getAddress(arbitrumFixture.crossChainPaymaster.address),
         sender: getAddress(alice.account.address),
         assets: [
           {
@@ -755,7 +762,7 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     const requestId = getVoucherRequestId(voucherRequest)
 
     // Wait for USER_CANCELLATION_DELAY (5 minutes)
-    await network.networkHelpers.time.increase(301n)
+    await mainnet.networkHelpers.time.increase(301n)
 
     // Alice cancels the request
     await paymasterAsOrigin.write.cancelVoucherRequest([voucherRequest], {
@@ -769,7 +776,7 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     assert.equal(metadata.core.status, 3, 'Status should be CANCELLED (3)')
 
     // Verify Alice received original amount back (without fee)
-    const aliceBalanceAfter = await testToken.read.balanceOf([
+    const aliceBalanceAfter = await mainnetTestToken.read.balanceOf([
       alice.account.address
     ])
     assert.equal(
@@ -785,37 +792,36 @@ describe('Cross-Chain Atomic Swap Integration', () => {
    * Test XLP balance queries.
    */
   it('should correctly query XLP balances and registration status', async () => {
-    return
     // Use different accounts to avoid conflicts with previous tests
-    const xlp1 = network.walletClients[2]
-    const xlp2 = network.walletClients[3]
+    const xlp1 = await getWalletClient('mainnetMock', 2)
+    const xlp2 = await getWalletClient('mainnetMock', 3)
 
     // Register two XLPs
-    await fixture.crossChainPaymaster.write.onL1XlpChainInfoAdded([
+    await mainnetFixture.crossChainPaymaster.write.onL1XlpChainInfoAdded([
       xlp1.account.address,
       xlp1.account.address
     ])
-    await fixture.crossChainPaymaster.write.onL1XlpChainInfoAdded([
+    await mainnetFixture.crossChainPaymaster.write.onL1XlpChainInfoAdded([
       xlp2.account.address,
       xlp2.account.address
     ])
 
     // Verify registration status
     assert.equal(
-      await fixture.crossChainPaymaster.read.isL2XlpRegistered([
+      await mainnetFixture.crossChainPaymaster.read.isL2XlpRegistered([
         xlp1.account.address
       ]),
       true
     )
     assert.equal(
-      await fixture.crossChainPaymaster.read.isL2XlpRegistered([
+      await mainnetFixture.crossChainPaymaster.read.isL2XlpRegistered([
         xlp2.account.address
       ]),
       true
     )
 
     // XLP1 deposits
-    await fixture.crossChainPaymaster.write.depositToXlp(
+    await mainnetFixture.crossChainPaymaster.write.depositToXlp(
       [xlp1.account.address],
       {
         value: parseEther('5'),
@@ -824,7 +830,7 @@ describe('Cross-Chain Atomic Swap Integration', () => {
     )
 
     // XLP2 deposits
-    await fixture.crossChainPaymaster.write.depositToXlp(
+    await mainnetFixture.crossChainPaymaster.write.depositToXlp(
       [xlp2.account.address],
       {
         value: parseEther('3'),
@@ -834,23 +840,21 @@ describe('Cross-Chain Atomic Swap Integration', () => {
 
     // Verify balances
     assert.equal(
-      await fixture.crossChainPaymaster.read.nativeBalanceOf([
+      await mainnetFixture.crossChainPaymaster.read.nativeBalanceOf([
         xlp1.account.address
       ]),
       parseEther('5')
     )
     assert.equal(
-      await fixture.crossChainPaymaster.read.nativeBalanceOf([
+      await mainnetFixture.crossChainPaymaster.read.nativeBalanceOf([
         xlp2.account.address
       ]),
       parseEther('3')
     )
 
     // Query XLP list (may include XLPs from previous tests)
-    const xlps: XlpEntry[] = await fixture.crossChainPaymaster.read.getXlps([
-      0n,
-      10n
-    ])
+    const xlps: XlpEntry[] =
+      await mainnetFixture.crossChainPaymaster.read.getXlps([0n, 10n])
     assert.ok(xlps.length >= 2, 'Should have at least 2 registered XLPs')
     // Verify our two XLPs are in the list
     // XlpEntry is a struct with l1XlpAddress and l2XlpAddress
