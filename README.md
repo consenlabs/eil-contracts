@@ -147,18 +147,22 @@ npx hardhat test
 5. E2E Test (Running 2 chains in background)
 
 ```bash
-# Start devnets (mainnet mock on :8545, arbitrum mock on :8546)
-yarn devnet:start
-
 # Run e2e tests
 yarn test:e2e
+```
+
+Manually operate the devnets:
+
+```bash
+# Start devnets (mainnet mock on :8545, arbitrum mock on :8546)
+yarn devnet:start
 
 # Stop devnets and clean up logs
 yarn devnet:stop
 ```
 
 If the port is still being occupied, you can use below command to kill it:
-```
+```bash
 sudo lsof -i :8545
 kill -9 <PID>
 ```

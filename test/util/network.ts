@@ -26,3 +26,8 @@ export async function getDeployer(networkName?: string) {
   const { viem } = await getNetwork(networkName)
   return (await viem.getWalletClients()).slice(-1)[0]
 }
+
+export async function getWalletClient(networkName?: string, index?: number) {
+  const { viem } = await getNetwork(networkName)
+  return (await viem.getWalletClients()).slice(index ?? 0)[0]
+}
