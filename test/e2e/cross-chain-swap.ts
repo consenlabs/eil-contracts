@@ -1,7 +1,6 @@
 import assert from 'node:assert'
 import { before, describe, it } from 'node:test'
 
-import { NetworkConnection } from 'hardhat/types/network'
 import {
   concat,
   encodeAbiParameters,
@@ -29,12 +28,7 @@ import {
   type SessionData,
   type XlpEntry
 } from '../fixture/eil.ts'
-import {
-  getDeployer,
-  getDualNetworks,
-  getNetwork,
-  getWalletClient
-} from '../util/network.ts'
+import { getDeployer, getNetwork, getWalletClient } from '../util/network.ts'
 
 // Native ETH address used by the contract (not address(0)!)
 const NATIVE_ETH = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE' as const
@@ -148,10 +142,6 @@ describe('Cross-Chain Atomic Swap Integration', () => {
       mainnetFixture.getPaymasterWithOriginAbi(alice)
     const mainnetPaymasterAsOriginXlp: OriginSwapManagerContractType =
       mainnetFixture.getPaymasterWithOriginAbi(mainnetXlpOperator)
-    const arbitrumPaymasterAsOrigin: OriginSwapManagerContractType =
-      arbitrumFixture.getPaymasterWithOriginAbi(alice)
-    const arbitrumPaymasterAsOriginXlp: OriginSwapManagerContractType =
-      arbitrumFixture.getPaymasterWithOriginAbi(arbitrumXlpOperator)
 
     // ========================================
     // Step 1: Lookup registered & funded XLPs
