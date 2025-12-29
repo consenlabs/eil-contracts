@@ -17,7 +17,7 @@ import {
 import CrossChainPaymasterArtifact from '../../artifacts/src/CrossChainPaymaster.sol/CrossChainPaymaster.json'
 import OriginSwapManagerArtifact from '../../artifacts/src/origin/OriginSwapManager.sol/OriginSwapManager.json'
 import { getDeployer, getNetwork } from '../util/network.ts'
-import { erc4337Fixture } from './erc4337.ts'
+import { createErc4337Fixture, erc4337Fixture } from './erc4337.ts'
 
 // Contract type declarations
 export type OriginSwapManagerContractType = GetContractReturnType<
@@ -138,7 +138,10 @@ export interface EilFixtureOptions {
   disableL2Connector?: boolean
 }
 
-export async function createEilFixture(options: EilFixtureOptions = {}) {
+export async function createEilFixture(
+  options: EilFixtureOptions = {},
+  networkName?: string
+) {
   const {
     voucherUnlockDelay = 3600n, // 1 hour
     timeBeforeDisputeExpires = 604800n, // 7 days
@@ -147,14 +150,14 @@ export async function createEilFixture(options: EilFixtureOptions = {}) {
     disableL2Connector = true // Allow direct XLP registration
   } = options
 
-  const { viem, networkHelpers } = await getNetwork()
-  const deployer = await getDeployer()
+  const { viem } = await getNetwork(networkName)
+  const deployer = await getDeployer(networkName)
   const deployConfig = {
     client: {
       wallet: deployer
     }
   }
-  const { entryPoint } = await networkHelpers.loadFixture(erc4337Fixture)
+  const { entryPoint } = await createErc4337Fixture(networkName)
 
   // Deploy OriginSwapManager (used for delegate calls)
   const originSwapManager = await viem.deployContract(
@@ -278,7 +281,7 @@ export async function eilFixture() {
   return createEilFixture()
 }
 
-export async function loadEilFixture() {
-  const { networkHelpers } = await getNetwork()
+export async function loadEilFixture(networkName?: string) {
+  const { networkHelpers } = await getNetwork(networkName)
   return networkHelpers.loadFixture(eilFixture)
 }

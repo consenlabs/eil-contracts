@@ -3,10 +3,10 @@ import { describe, it } from 'node:test'
 
 import { concat, getAddress, isAddress, keccak256 } from 'viem'
 
-import { loadEilFixture } from './fixture/eil.ts'
-import { loadErc4337Fixture } from './fixture/erc4337.ts'
-import { loadSimpleMultiChainAccountFixture } from './fixture/simpleMultiChainAccount.ts'
-import { getDeployer } from './util/network.ts'
+import { loadEilFixture } from '../fixture/eil.ts'
+import { loadErc4337Fixture } from '../fixture/erc4337.ts'
+import { loadSimpleMultiChainAccountFixture } from '../fixture/simpleMultiChainAccount.ts'
+import { getDeployer } from '../util/network.ts'
 
 describe('Fixture', () => {
   it('should load ERC-4337 fixture', async () => {
